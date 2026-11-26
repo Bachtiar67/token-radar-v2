@@ -158,7 +158,6 @@ async function main() {
     process.exit(0);
   }
 
-  // Full run: run main first to generate data.js, then screenshots, then main again to copy screenshots and build dossier
   console.log('[cli] Step 1: Running main to generate data.js...');
   if (!runMain(inputPath, outputDir)) {
     process.exit(1);

@@ -149,11 +149,9 @@ async function generateBoardScreenshot() {
   const ctx = canvas.getContext('2d');
   const radar = loadRadarData();
 
-  // Background
   ctx.fillStyle = COLORS.canvas;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  // Header
   ctx.fillStyle = COLORS.surface;
   ctx.fillRect(0, 0, WIDTH, 80);
   ctx.strokeStyle = COLORS.border;
@@ -162,7 +160,6 @@ async function generateBoardScreenshot() {
   ctx.lineTo(WIDTH, 80);
   ctx.stroke();
 
-  // Brand
   ctx.fillStyle = COLORS.accent;
   ctx.beginPath();
   ctx.arc(50, 40, 6, 0, Math.PI * 2);
@@ -172,14 +169,12 @@ async function generateBoardScreenshot() {
     color: COLORS.muted
   });
 
-  // Meta
   drawText(ctx, `Snapshot ${radar.as_of}  |  DefiLlama Protocol Index  |  ${radar.model_version} model`, WIDTH - 60, 40, {
     font: '12px system-ui',
     color: COLORS.muted,
     align: 'right'
   });
 
-  // Lede
   let y = 100;
   drawText(ctx, `${radar.watchlist_size} watchlist protocols, ranked by multi-factor implied value`, 60, y, {
     font: 'bold 28px system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -192,7 +187,6 @@ async function generateBoardScreenshot() {
     maxWidth: 800
   });
 
-  // Facts
   y += 50;
   const facts = [
     ['Watchlist covered', radar.watchlist_size + ' / ' + radar.watchlist_size],
@@ -206,7 +200,6 @@ async function generateBoardScreenshot() {
     y += 24;
   });
 
-  // Controls bar
   y += 10;
   ctx.fillStyle = COLORS.surface;
   ctx.fillRect(40, y, WIDTH - 80, 50);
@@ -225,7 +218,6 @@ async function generateBoardScreenshot() {
   ctx.fill();
   drawText(ctx, 'All categories', 425, y + 36, { font: '13px system-ui', color: COLORS.muted });
 
-  // Tabs
   ctx.fillStyle = COLORS.surfaceElevated;
   drawRoundedRect(ctx, 650, y + 18, 160, 32, 6);
   ctx.fill();
@@ -239,7 +231,6 @@ async function generateBoardScreenshot() {
   ctx.fill();
   drawText(ctx, 'Live token', 740, y + 34, { font: 'bold 13px system-ui', color: COLORS.muted, align: 'center', baseline: 'middle' });
 
-  // Table
   y += 70;
   const columns = [
     { title: 'Rank', x: 60, width: 50 },
@@ -286,7 +277,6 @@ async function generateBoardScreenshot() {
     y += 40;
   });
 
-  // Model panel
   y += 20;
   ctx.fillStyle = COLORS.surface;
   drawRoundedRect(ctx, 40, y, WIDTH - 80, 180, 12);
@@ -319,7 +309,6 @@ async function generateDetailScreenshot() {
   ctx.fillStyle = COLORS.canvas;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  // Header bar
   ctx.fillStyle = COLORS.surface;
   ctx.fillRect(0, 0, WIDTH, 80);
   ctx.strokeStyle = COLORS.border;
@@ -331,19 +320,16 @@ async function generateDetailScreenshot() {
   drawText(ctx, 'TOKEN RADAR v2', 50, 30, { font: 'bold 12px ui-monospace', color: COLORS.muted });
   drawText(ctx, `Rank ${row.rank} of ${radar.board_size}`, 50, 50, { font: '12px system-ui', color: COLORS.accent });
 
-  // Close button
   ctx.fillStyle = COLORS.surfaceElevated;
   drawRoundedRect(ctx, WIDTH - 100, 24, 80, 32, 8);
   ctx.fill();
   drawText(ctx, 'Close', WIDTH - 60, 40, { font: '13px system-ui', color: COLORS.ink, align: 'center', baseline: 'middle' });
 
-  // Detail content
   let y = 120;
   drawText(ctx, row.name, 60, y, { font: 'bold 28px system-ui', color: COLORS.ink });
   y += 40;
   drawText(ctx, (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain'), 60, y, { font: '14px system-ui', color: COLORS.muted });
 
-  // Implied value breakdown
   y += 40;
   ctx.fillStyle = COLORS.surface;
   drawRoundedRect(ctx, 40, y, WIDTH - 80, 320, 12);
@@ -373,7 +359,6 @@ async function generateDetailScreenshot() {
     eqY += 26;
   });
 
-  // Risk flags
   if (row.risk_flags && row.risk_flags.length > 0) {
     y += 340;
     ctx.fillStyle = COLORS.surface;
@@ -398,7 +383,6 @@ async function generateDetailScreenshot() {
     });
   }
 
-  // Farm plan
   y = row.risk_flags && row.risk_flags.length > 0 ? y + 160 : y + 340;
   ctx.fillStyle = COLORS.surface;
   drawRoundedRect(ctx, 40, y, WIDTH - 80, 200, 12);
@@ -436,7 +420,6 @@ async function generateFilteredScreenshot() {
   const ctx = canvas.getContext('2d');
   const radar = loadRadarData();
 
-  // Filter: high liquidity + positive growth
   const filtered = radar.rows.filter(r =>
     (r.liquidity_score || 0) >= 0.7 &&
     (r.change_7d || 0) > 0
@@ -445,7 +428,6 @@ async function generateFilteredScreenshot() {
   ctx.fillStyle = COLORS.canvas;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  // Header
   ctx.fillStyle = COLORS.surface;
   ctx.fillRect(0, 0, WIDTH, 80);
   ctx.strokeStyle = COLORS.border;
@@ -461,7 +443,6 @@ async function generateFilteredScreenshot() {
     align: 'right'
   });
 
-  // Active filter pills
   let y = 100;
   const pills = [
     { text: 'Liquidity ≥ 70%', color: COLORS.accent },
@@ -479,13 +460,11 @@ async function generateFilteredScreenshot() {
     pillX += 180;
   });
 
-  // Clear filters button
   ctx.fillStyle = COLORS.surfaceElevated;
   drawRoundedRect(ctx, pillX + 20, y, 120, 32, 8);
   ctx.fill();
   drawText(ctx, 'Clear all', pillX + 80, y + 16, { font: '13px system-ui', color: COLORS.muted, align: 'center', baseline: 'middle' });
 
-  // Table
   y += 60;
   const columns = [
     { title: 'Rank', x: 60, width: 50 },
@@ -527,7 +506,6 @@ async function generateFilteredScreenshot() {
     y += 40;
   });
 
-  // Stats summary
   y += 20;
   const avgLiq = filtered.reduce((s, r) => s + (r.liquidity_score || 0), 0) / filtered.length;
   const avgGrowth = filtered.reduce((s, r) => s + (r.change_7d || 0), 0) / filtered.length;

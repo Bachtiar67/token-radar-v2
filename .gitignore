@@ -3,3 +3,8 @@ output/
 output-verify-*
 *.log
 .DS_Store
+package-lock.json
+transcripts.tar.gz
+screenshots/
+input/snapshot.json
+main.ts

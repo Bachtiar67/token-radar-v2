@@ -49,11 +49,14 @@ token-radar-v2/
 │   └── app.js               # Dashboard logic (sort, filter, detail drawer)
 ├── vendor/
 │   └── makefun-board.ts     # Dossier builder (from make.fun kit)
-├── screenshots/             # Generated PNG screenshots (3 files)
-├── output/                  # Runtime output (board.json, data.js, dossier.json, etc.)
+├── screenshots/             # Generated PNG screenshots (3 files, gitignored)
+├── output/                  # Runtime output (board.json, data.js, dossier.json, etc., gitignored)
 ├── input/
-│   └── snapshot.json        # Sealed protocol snapshot (DefiLlama data)
-└── package.json
+│   └── snapshot.json        # Sealed protocol snapshot (DefiLlama data, gitignored)
+├── LICENSE                  # MIT license with SPDX identifier
+├── package.json
+├── system-prompt.md         # System prompt for transcript tracking
+└── .gitignore
 ```
 
 ## Scoring Model (radar-2)
@@ -93,7 +96,7 @@ All scores are deterministic — derived from snapshot fields via hash-based pse
 
 ```bash
 $ node src/cli.ts --input input/snapshot.json --verify
-[cli] Running determinism verification (2 runs)....
+[cli] Running determinism verification (2 runs)...
 [cli] Run 1...
 [cli] Run 2...
 [cli] Run 1 dossier SHA-256: c0193c3fa2ca3ae43c5e3947286c0fa9db883b253390288dd2be03de3459faf9

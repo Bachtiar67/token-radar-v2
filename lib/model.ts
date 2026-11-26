@@ -1,5 +1,6 @@
 // Token Radar v2 - Enhanced Multi-Factor Scoring Model
 // Deterministic, offline-only, runs on Node 22+ standard library
+// No external dependencies at runtime, fully deterministic SHA-256 output
 
 export interface SnapshotProtocol {
   slug: string;

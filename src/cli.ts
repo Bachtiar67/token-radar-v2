@@ -2,7 +2,7 @@
 // Runs the radar, generates output, and copies dossier to Download folder
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -116,9 +116,14 @@ async function main() {
 
   if (shouldVerify) {
     console.log('[cli] Running determinism verification (2 runs)...');
+    const rm = rmSync;
 
     const tempDir1 = join(projectRoot, 'output-verify-1');
     const tempDir2 = join(projectRoot, 'output-verify-2');
+
+    // Clean previous verification directories
+    if (existsSync(tempDir1)) rm(tempDir1, { recursive: true });
+    if (existsSync(tempDir2)) rm(tempDir2, { recursive: true });
 
     console.log('[cli] Run 1...');
     if (!runMain(inputPath, tempDir1)) {

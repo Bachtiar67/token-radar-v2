@@ -1,8 +1,8 @@
-// Token Radar v2 - Screenshot Generator
-// Uses @napi-rs/canvas to generate deterministic PNG screenshots
-// No browser/Playwright needed - works on Android ARM64
+// Token Radar v2 - Screenshot Generator v2
+// Uses @napi-rs/canvas with embedded fonts for deterministic PNG generation
+// Three publication-grade dark-mode financial terminal screenshots
 
-import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,30 +11,42 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = join(here, '..');
 const outputDir = join(projectRoot, 'output');
 const screenshotsDir = join(projectRoot, 'screenshots');
+const assetsDir = join(projectRoot, 'assets');
 
 const WIDTH = 1440;
 const HEIGHT = 900;
-const DPR = 1;
+
+GlobalFonts.registerFromPath(join(assetsDir, 'fonts', 'IBMPlexMono-Regular.ttf'), 'IBM Plex Mono');
+GlobalFonts.registerFromPath(join(assetsDir, 'fonts', 'IBMPlexMono-Regular.ttf'), 'IBM Plex Mono Bold');
 
 const COLORS = {
-  canvas: '#0d1117',
-  surface: '#161b22',
-  surfaceElevated: '#21262d',
-  ink: '#e6edf3',
-  muted: '#8b949e',
-  border: '#30363d',
-  accent: '#58a6ff',
-  positive: '#3fb950',
-  negative: '#f85149',
-  warning: '#d29922',
+  bg: '#0a0e14',
+  panel: '#111820',
+  panelBorder: '#1e2a3a',
+  text: '#e8eaed',
+  textDim: '#9aa0a6',
+  textMuted: '#6c757d',
+  accent: '#00d4aa',
+  accentGlow: 'rgba(0, 212, 170, 0.4)',
+  warn: '#ffb800',
+  warnGlow: 'rgba(255, 184, 0, 0.4)',
+  danger: '#ff5252',
+  dangerGlow: 'rgba(255, 82, 82, 0.4)',
+  info: '#42a5f5',
+  infoGlow: 'rgba(66, 165, 245, 0.4)',
+  grid: '#1e2a3a',
+  barBg: '#0d141c',
+  positive: '#00d4aa',
+  negative: '#ff5252',
 };
 
 function fmtUsd(n: number): string {
   if (!isFinite(n)) return 'n/a';
-  if (Math.abs(n) >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
-  if (Math.abs(n) >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-  if (Math.abs(n) >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-  if (Math.abs(n) >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+  if (abs >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 }
 
@@ -49,10 +61,11 @@ function fmtAge(days: number | null): string {
   return Math.max(0, Math.round(days)) + 'd';
 }
 
-function scoreClass(score: number): 'high' | 'medium' | 'low' {
-  if (score >= 0.75) return 'high';
-  if (score >= 0.5) return 'medium';
-  return 'low';
+function riskTier(score: number): { label: string; color: string; glow: string } {
+  if (score >= 0.75) return { label: 'LOW', color: COLORS.positive, glow: COLORS.accentGlow };
+  if (score >= 0.5) return { label: 'MEDIUM', color: COLORS.warn, glow: COLORS.warnGlow };
+  if (score >= 0.25) return { label: 'HIGH', color: COLORS.danger, glow: COLORS.dangerGlow };
+  return { label: 'CRITICAL', color: '#ff0000', glow: 'rgba(255, 0, 0, 0.4)' };
 }
 
 function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -76,8 +89,8 @@ function drawText(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
   baseline?: CanvasTextBaseline;
   maxWidth?: number;
 } = {}) {
-  ctx.font = opts.font || '14px system-ui, -apple-system, "Segoe UI", sans-serif';
-  ctx.fillStyle = opts.color || COLORS.ink;
+  ctx.font = opts.font || '14px "IBM Plex Mono"';
+  ctx.fillStyle = opts.color || COLORS.text;
   ctx.textAlign = opts.align || 'left';
   ctx.textBaseline = opts.baseline || 'top';
   if (opts.maxWidth) {
@@ -87,48 +100,21 @@ function drawText(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
   }
 }
 
-function drawTableHeader(ctx: CanvasRenderingContext2D, columns: { title: string; x: number; width: number }[], y: number) {
-  ctx.fillStyle = COLORS.surfaceElevated;
-  ctx.fillRect(40, y, WIDTH - 80, 36);
-
-  ctx.font = 'bold 11px system-ui, -apple-system, "Segoe UI", sans-serif';
-  ctx.fillStyle = COLORS.muted;
-  ctx.textBaseline = 'middle';
-
-  columns.forEach(col => {
-    drawText(ctx, col.title.toUpperCase(), col.x, y + 18, {
-      font: 'bold 11px system-ui, -apple-system, "Segoe UI", sans-serif',
-      color: COLORS.muted,
-      baseline: 'middle'
-    });
-  });
-}
-
-function drawTableRow(ctx: CanvasRenderingContext2D, rowData: { x: number; text: string; color?: string; font?: string; align?: CanvasTextAlign }[], y: number, selected: boolean) {
-  if (selected) {
-    ctx.fillStyle = 'rgba(88, 166, 255, 0.12)';
-    ctx.fillRect(40, y, WIDTH - 80, 40);
-    ctx.fillStyle = COLORS.accent;
-    ctx.fillRect(40, y, 3, 40);
-  } else {
-    ctx.fillStyle = COLORS.surface;
-    ctx.fillRect(40, y, WIDTH - 80, 40);
-  }
-
-  ctx.strokeStyle = COLORS.border;
-  ctx.beginPath();
-  ctx.moveTo(40, y + 40);
-  ctx.lineTo(WIDTH - 40, y + 40);
-  ctx.stroke();
-
-  ctx.textBaseline = 'middle';
-  rowData.forEach(rd => {
-    drawText(ctx, rd.text, rd.x, y + 20, {
-      font: rd.font || '13px ui-monospace, "SF Mono", Menlo, monospace',
-      color: rd.color || COLORS.ink,
-      align: rd.align || 'left'
-    });
-  });
+function drawGlowText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, opts: {
+  font?: string;
+  color?: string;
+  glowColor?: string;
+  align?: CanvasTextAlign;
+  baseline?: CanvasTextBaseline;
+} = {}) {
+  ctx.font = opts.font || '14px "IBM Plex Mono"';
+  ctx.fillStyle = opts.glowColor || opts.color || COLORS.text;
+  ctx.shadowColor = opts.glowColor || opts.color || COLORS.text;
+  ctx.shadowBlur = 8;
+  ctx.textAlign = opts.align || 'left';
+  ctx.textBaseline = opts.baseline || 'top';
+  ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
 }
 
 function loadRadarData() {
@@ -144,396 +130,511 @@ function loadRadarData() {
   return JSON.parse(match[1]);
 }
 
-async function generateBoardScreenshot() {
+async function generateMarketOverview() {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
   const radar = loadRadarData();
 
-  ctx.fillStyle = COLORS.canvas;
+  ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.fillStyle = COLORS.surface;
-  ctx.fillRect(0, 0, WIDTH, 80);
-  ctx.strokeStyle = COLORS.border;
-  ctx.beginPath();
-  ctx.moveTo(0, 80);
-  ctx.lineTo(WIDTH, 80);
-  ctx.stroke();
-
-  ctx.fillStyle = COLORS.accent;
-  ctx.beginPath();
-  ctx.arc(50, 40, 6, 0, Math.PI * 2);
-  ctx.fill();
-  drawText(ctx, 'TOKEN RADAR v2', 65, 30, {
-    font: 'bold 12px ui-monospace, "SF Mono", Menlo, monospace',
-    color: COLORS.muted
-  });
-
-  drawText(ctx, `Snapshot ${radar.as_of}  |  DefiLlama Protocol Index  |  ${radar.model_version} model`, WIDTH - 60, 40, {
-    font: '12px system-ui',
-    color: COLORS.muted,
-    align: 'right'
-  });
-
-  let y = 100;
-  drawText(ctx, `${radar.watchlist_size} watchlist protocols, ranked by multi-factor implied value`, 60, y, {
-    font: 'bold 28px system-ui, -apple-system, "Segoe UI", sans-serif',
-    color: COLORS.ink
-  });
-  y += 40;
-  drawText(ctx, 'The watchlist is the floor: every protocol with at least $' + Math.round(radar.floor_usd / 1e6) + 'M of TVL and no token on record. The early radar adds ' + radar.early_size + ' pre-token protocols below that floor. Implied value combines TVL, 7d growth, protocol age, liquidity depth, holder distribution, volume momentum, and risk flags.', 60, y, {
-    font: '14px system-ui',
-    color: COLORS.muted,
-    maxWidth: 800
-  });
-
-  y += 50;
-  const facts = [
-    ['Watchlist covered', radar.watchlist_size + ' / ' + radar.watchlist_size],
-    ['Pre-token rows scored', String(radar.board_size)],
-    ['Early rows below the floor', String(radar.early_size)],
-    ['Live-token protocols set aside', String(radar.live_size)],
-  ];
-  facts.forEach(([label, value]) => {
-    drawText(ctx, label, 60, y, { font: '13px system-ui', color: COLORS.muted });
-    drawText(ctx, value, 400, y, { font: 'bold 14px ui-monospace', color: COLORS.ink });
-    y += 24;
-  });
-
-  y += 10;
-  ctx.fillStyle = COLORS.surface;
-  ctx.fillRect(40, y, WIDTH - 80, 50);
-  ctx.strokeStyle = COLORS.border;
-  ctx.strokeRect(40, y, WIDTH - 80, 50);
-
-  drawText(ctx, 'Search', 60, y + 12, { font: '11px system-ui', color: COLORS.muted });
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, 55, y + 28, 300, 32, 8);
-  ctx.fill();
-  drawText(ctx, 'Search name, category or chain...', 65, y + 36, { font: '13px system-ui', color: COLORS.muted });
-
-  drawText(ctx, 'Category', 420, y + 12, { font: '11px system-ui', color: COLORS.muted });
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, 415, y + 28, 180, 32, 8);
-  ctx.fill();
-  drawText(ctx, 'All categories', 425, y + 36, { font: '13px system-ui', color: COLORS.muted });
-
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, 650, y + 18, 160, 32, 6);
-  ctx.fill();
-  ctx.fillStyle = COLORS.ink;
-  drawRoundedRect(ctx, 653, y + 21, 74, 26, 4);
-  ctx.fill();
-  drawText(ctx, 'Pre-token', 663, y + 34, { font: 'bold 13px system-ui', color: COLORS.canvas, align: 'center', baseline: 'middle' });
-
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, 730, y + 18, 160, 32, 6);
-  ctx.fill();
-  drawText(ctx, 'Live token', 740, y + 34, { font: 'bold 13px system-ui', color: COLORS.muted, align: 'center', baseline: 'middle' });
-
-  y += 70;
-  const columns = [
-    { title: 'Rank', x: 60, width: 50 },
-    { title: 'Protocol', x: 130, width: 300 },
-    { title: 'TVL', x: 450, width: 120 },
-    { title: '7d %', x: 580, width: 80 },
-    { title: 'Age', x: 680, width: 60 },
-    { title: 'Liq', x: 760, width: 60 },
-    { title: 'Hold', x: 840, width: 60 },
-    { title: 'Mom', x: 920, width: 60 },
-    { title: 'Implied Value', x: 1000, width: 160 },
-    { title: 'Token', x: 1180, width: 80 },
-    { title: 'Risk', x: 1280, width: 100 },
-  ];
-
-  drawTableHeader(ctx, columns, y);
-  y += 40;
-
-  const rows = radar.rows.slice(0, 15);
-  rows.forEach((row, i) => {
-    const growth = row.change_7d === null ? 'n/a' : fmtPct(row.change_7d);
-    const growthColor = row.change_7d === null ? COLORS.muted : row.change_7d >= 0 ? COLORS.positive : COLORS.negative;
-    const liqClass = scoreClass(row.liquidity_score || 0);
-    const holdClass = scoreClass(row.holder_score || 0);
-    const momClass = scoreClass(row.momentum_score || 0);
-    const riskClass = (row.risk_flags && row.risk_flags.length >= 3) ? 'high' : (row.risk_flags && row.risk_flags.length >= 2) ? 'medium' : 'low';
-    const riskColors: Record<string, string> = { high: COLORS.negative, medium: COLORS.warning, low: COLORS.positive };
-
-    const rowData = [
-      { x: 60, text: String(row.rank) },
-      { x: 130, text: row.name, color: COLORS.ink },
-      { x: 450, text: fmtUsd(row.tvl_usd), color: COLORS.ink, font: '13px ui-monospace' },
-      { x: 580, text: growth, color: growthColor, font: '13px ui-monospace' },
-      { x: 680, text: fmtAge(row.age_days), color: COLORS.muted, font: '13px ui-monospace' },
-      { x: 760, text: Math.round((row.liquidity_score || 0) * 100) + '%', color: COLORS.accent, font: '13px ui-monospace' },
-      { x: 840, text: Math.round((row.holder_score || 0) * 100) + '%', color: COLORS.accent, font: '13px ui-monospace' },
-      { x: 920, text: Math.round((row.momentum_score || 0) * 100) + '%', color: COLORS.accent, font: '13px ui-monospace' },
-      { x: 1000, text: fmtUsd(row.implied_value_usd), color: COLORS.ink, font: 'bold 13px ui-monospace' },
-      { x: 1180, text: 'no token', color: COLORS.warning },
-      { x: 1280, text: row.risk_flags && row.risk_flags.length ? row.risk_flags.length + ' flags' : 'low risk', color: riskColors[riskClass] },
-    ];
-
-    drawTableRow(ctx, rowData, y, i === 0);
-    y += 40;
-  });
-
-  y += 20;
-  ctx.fillStyle = COLORS.surface;
-  drawRoundedRect(ctx, 40, y, WIDTH - 80, 180, 12);
-  ctx.fill();
-  ctx.strokeStyle = COLORS.border;
-  ctx.stroke();
-
-  drawText(ctx, 'How implied value is computed (radar-2)', 60, y + 20, { font: 'bold 16px system-ui', color: COLORS.ink });
-  drawText(ctx, 'implied = round( tvl_usd x 0.25 x (1 + clamp(change_7d, -60, 120) / 100 x 0.45) x (0.55 + min(age_days, 1095) / 1095 x 0.45) x (1 + (liq-0.5)x0.15+(hold-0.5)x0.15+(mom-0.5)x0.15) x (1-risk_penalty) )', 60, y + 50, {
-    font: '12px ui-monospace, "SF Mono", Menlo, monospace',
-    color: COLORS.muted,
-    maxWidth: WIDTH - 120
-  });
-
-  const buffer = canvas.toBuffer('image/png');
-  const outputPath = join(screenshotsDir, '1-board.png');
-  mkdirSync(screenshotsDir, { recursive: true });
-  writeFileSync(outputPath, buffer);
-  console.log(`Generated: ${outputPath} (${buffer.length} bytes)`);
-  return outputPath;
-}
-
-async function generateDetailScreenshot() {
-  const canvas = createCanvas(WIDTH, HEIGHT);
-  const ctx = canvas.getContext('2d');
-  const radar = loadRadarData();
-
-  const row = radar.rows[0];
-
-  ctx.fillStyle = COLORS.canvas;
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-
-  ctx.fillStyle = COLORS.surface;
-  ctx.fillRect(0, 0, WIDTH, 80);
-  ctx.strokeStyle = COLORS.border;
-  ctx.beginPath();
-  ctx.moveTo(0, 80);
-  ctx.lineTo(WIDTH, 80);
-  ctx.stroke();
-
-  drawText(ctx, 'TOKEN RADAR v2', 50, 30, { font: 'bold 12px ui-monospace', color: COLORS.muted });
-  drawText(ctx, `Rank ${row.rank} of ${radar.board_size}`, 50, 50, { font: '12px system-ui', color: COLORS.accent });
-
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, WIDTH - 100, 24, 80, 32, 8);
-  ctx.fill();
-  drawText(ctx, 'Close', WIDTH - 60, 40, { font: '13px system-ui', color: COLORS.ink, align: 'center', baseline: 'middle' });
-
-  let y = 120;
-  drawText(ctx, row.name, 60, y, { font: 'bold 28px system-ui', color: COLORS.ink });
-  y += 40;
-  drawText(ctx, (row.category || 'Other') + ' on ' + (row.chains && row.chains.length ? row.chains.join(', ') : 'an unnamed chain'), 60, y, { font: '14px system-ui', color: COLORS.muted });
-
-  y += 40;
-  ctx.fillStyle = COLORS.surface;
-  drawRoundedRect(ctx, 40, y, WIDTH - 80, 320, 12);
-  ctx.fill();
-  ctx.strokeStyle = COLORS.border;
-  ctx.stroke();
-
-  drawText(ctx, 'Implied value breakdown', 60, y + 20, { font: 'bold 15px system-ui', color: COLORS.ink });
-
-  const equations = [
-    ['TVL', fmtUsd(row.tvl_usd), COLORS.ink],
-    ['Seven-day growth', fmtPct(row.change_7d), row.change_7d !== null && row.change_7d >= 0 ? COLORS.positive : COLORS.negative],
-    ['Age with no token', fmtAge(row.age_days), COLORS.muted],
-    ['Growth multiplier', String(row.growth_multiplier), COLORS.ink],
-    ['Maturity multiplier', String(row.maturity_multiplier), COLORS.ink],
-    ['Liquidity score', row.liquidity_score ? Math.round(row.liquidity_score * 10000) / 100 + '%' : 'n/a', COLORS.accent],
-    ['Holder score', row.holder_score ? Math.round(row.holder_score * 10000) / 100 + '%' : 'n/a', COLORS.accent],
-    ['Momentum score', row.momentum_score ? Math.round(row.momentum_score * 10000) / 100 + '%' : 'n/a', COLORS.accent],
-    ['Risk penalty', '-' + Math.round((row.risk_penalty || 0) * 10000) / 100 + '%', COLORS.negative],
-    ['Implied value', fmtUsd(row.implied_value_usd), COLORS.ink],
-  ];
-
-  let eqY = y + 50;
-  equations.forEach(([label, value, color]) => {
-    drawText(ctx, label, 60, eqY, { font: '12px system-ui', color: COLORS.muted });
-    drawText(ctx, value, WIDTH - 100, eqY, { font: 'bold 13px ui-monospace', color, align: 'right' });
-    eqY += 26;
-  });
-
-  if (row.risk_flags && row.risk_flags.length > 0) {
-    y += 340;
-    ctx.fillStyle = COLORS.surface;
-    drawRoundedRect(ctx, 40, y, WIDTH - 80, 140, 12);
-    ctx.fill();
-    ctx.strokeStyle = COLORS.border;
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let x = 40; x < WIDTH - 40; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 40);
+    ctx.lineTo(x, HEIGHT - 40);
     ctx.stroke();
-
-    drawText(ctx, 'Risk flags', 60, y + 20, { font: 'bold 15px system-ui', color: COLORS.ink });
-
-    let flagY = y + 50;
-    row.risk_flags.slice(0, 4).forEach((flag, i) => {
-      const isHigh = flag.includes('Very young') || flag.includes('Sharp') || flag.includes('Centralized') || flag.includes('Bridge');
-      const flagColor = isHigh ? COLORS.negative : COLORS.warning;
-      ctx.fillStyle = flagColor + '33';
-      drawRoundedRect(ctx, 60, flagY, WIDTH - 120, 28, 6);
-      ctx.fill();
-      ctx.strokeStyle = flagColor + '80';
-      ctx.stroke();
-      drawText(ctx, flag, 75, flagY + 14, { font: '12px system-ui', color: flagColor, baseline: 'middle' });
-      flagY += 32;
-    });
+  }
+  for (let y = 40; y < HEIGHT - 40; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(40, y);
+    ctx.lineTo(WIDTH - 40, y);
+    ctx.stroke();
   }
 
-  y = row.risk_flags && row.risk_flags.length > 0 ? y + 160 : y + 340;
-  ctx.fillStyle = COLORS.surface;
-  drawRoundedRect(ctx, 40, y, WIDTH - 80, 200, 12);
-  ctx.fill();
-  ctx.strokeStyle = COLORS.border;
-  ctx.stroke();
+  const topRows = radar.rows.slice(0, 10);
+  const passCount = radar.rows.filter(r => (r.liquidity_score || 0) >= 0.7 && (r.holder_score || 0) >= 0.7 && (r.momentum_score || 0) >= 0.5).length;
+  const watchCount = radar.rows.filter(r => (r.liquidity_score || 0) >= 0.5).length;
+  const rejectCount = radar.rows.length - passCount - watchCount;
+  const medianLiq = radar.rows.map(r => r.liquidity_score || 0).sort((a, b) => a - b)[Math.floor(radar.rows.length / 2)];
 
-  drawText(ctx, 'Farm plan', 60, y + 20, { font: 'bold 15px system-ui', color: COLORS.ink });
-
-  const steps = [
-    'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline. Cost: under $3 of gas for the first transaction. Time: 5 minutes.',
-    'Supply $100 of USDC to ' + row.name + ' on ' + (row.chains[0] || 'its main chain') + ' and keep the position open. Cost: $100 of capital and about $4 of gas. Time: 15 minutes to set up.',
-    'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote. Cost: about $2 of gas a week. Time: 10 minutes a week.',
-    'Hold the position for at least 30 days so the activity is counted in more than one snapshot. Cost: the $100 stays in the position. Time: 30 days.',
-    "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes. Cost: no fee to check, and never pay to claim. Time: 10 minutes.",
-    'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it. Cost: nothing but the log. Time: 5 minutes.',
-  ];
-
-  let stepY = y + 50;
-  steps.forEach((step, i) => {
-    drawText(ctx, String(i + 1), 60, stepY, { font: 'bold 11px system-ui', color: COLORS.accent });
-    drawText(ctx, step, 90, stepY, { font: '12px system-ui', color: COLORS.ink, maxWidth: WIDTH - 140 });
-    stepY += 28;
+  let y = 50;
+  drawGlowText(ctx, 'TOKEN RADAR v2 — MARKET OVERVIEW', 60, y, {
+    font: 'bold 24px "IBM Plex Mono"',
+    color: COLORS.accent,
+    glowColor: COLORS.accentGlow
+  });
+  drawText(ctx, `Snapshot: ${radar.as_of} | ${radar.watchlist_size} Watchlist | ${radar.early_size} Early | ${radar.live_size} Live`, 60, y + 30, {
+    font: '12px "IBM Plex Mono"',
+    color: COLORS.textDim
   });
 
-  const buffer = canvas.toBuffer('image/png');
-  const outputPath = join(screenshotsDir, '2-detail.png');
-  writeFileSync(outputPath, buffer);
-  console.log(`Generated: ${outputPath} (${buffer.length} bytes)`);
+  const kpis = [
+    { label: 'TOTAL SCANNED', value: String(radar.rows.length), color: COLORS.info, glow: COLORS.infoGlow },
+    { label: 'PASS (STRONG)', value: String(passCount), color: COLORS.positive, glow: COLORS.accentGlow },
+    { label: 'WATCH (CAUTION)', value: String(watchCount), color: COLORS.warn, glow: COLORS.warnGlow },
+    { label: 'REJECT (HIGH RISK)', value: String(rejectCount), color: COLORS.danger, glow: COLORS.dangerGlow },
+    { label: 'MEDIAN LIQUIDITY', value: Math.round(medianLiq * 100) + '%', color: COLORS.accent, glow: COLORS.accentGlow },
+    { label: 'MARKET REGIME', value: passCount > radar.rows.length * 0.3 ? 'BULLISH' : passCount > radar.rows.length * 0.15 ? 'NEUTRAL' : 'BEARISH', color: passCount > radar.rows.length * 0.3 ? COLORS.positive : passCount > radar.rows.length * 0.15 ? COLORS.warn : COLORS.danger, glow: passCount > radar.rows.length * 0.3 ? COLORS.accentGlow : passCount > radar.rows.length * 0.15 ? COLORS.warnGlow : COLORS.dangerGlow },
+  ];
+
+  let kx = 60;
+  const kw = 210;
+  kpis.forEach((kpi, i) => {
+    const px = 60 + i * (kw + 16);
+    ctx.fillStyle = COLORS.panel;
+    drawRoundedRect(ctx, px, y + 60, kw, 100, 12);
+    ctx.fill();
+    ctx.strokeStyle = COLORS.panelBorder;
+    ctx.stroke();
+
+    drawText(ctx, kpi.label, px + 16, y + 74, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
+    drawGlowText(ctx, kpi.value, px + 16, y + 94, { font: 'bold 22px "IBM Plex Mono"', color: kpi.color, glowColor: kpi.glow });
+  });
+
+  y += 180;
+
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, 40, y, WIDTH - 80, 400, 12);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.panelBorder;
+  ctx.stroke();
+
+  drawText(ctx, 'TOP RANKED TOKENS', 60, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
+
+  const colHeaders = [
+    { title: 'RANK', x: 60, w: 70 },
+    { title: 'TOKEN', x: 150, w: 280 },
+    { title: 'TVL', x: 450, w: 150 },
+    { title: '7D %', x: 620, w: 100 },
+    { title: 'LIQUIDITY', x: 740, w: 140 },
+    { title: 'HOLDERS', x: 900, w: 140 },
+    { title: 'MOMENTUM', x: 1060, w: 140 },
+    { title: 'IMPLIED VALUE', x: 1220, w: 180 },
+  ];
+
+  ctx.fillStyle = COLORS.panelBorder;
+  ctx.fillRect(60, y + 40, WIDTH - 120, 32);
+  colHeaders.forEach(col => {
+    drawText(ctx, col.title, col.x, y + 56, { font: 'bold 11px "IBM Plex Mono"', color: COLORS.textDim, align: 'left', baseline: 'middle' });
+  });
+
+  topRows.forEach((row, i) => {
+    const ry = y + 80 + i * 30;
+    if (i % 2 === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.02)';
+      ctx.fillRect(60, ry, WIDTH - 120, 28);
+    }
+
+    const liqPct = Math.round((row.liquidity_score || 0) * 100);
+    const holdPct = Math.round((row.holder_score || 0) * 100);
+    const momPct = Math.round((row.momentum_score || 0) * 100);
+    const liqTier = riskTier(row.liquidity_score || 0);
+    const holdTier = riskTier(row.holder_score || 0);
+    const momTier = riskTier(row.momentum_score || 0);
+
+    drawText(ctx, '#' + row.rank, 60, ry + 14, { font: 'bold 13px "IBM Plex Mono"', color: COLORS.accent, baseline: 'middle' });
+    drawText(ctx, row.name, 150, ry + 14, { font: '13px "IBM Plex Mono"', color: COLORS.text, baseline: 'middle' });
+    drawText(ctx, fmtUsd(row.tvl_usd), 450, ry + 14, { font: '13px "IBM Plex Mono"', color: COLORS.text, baseline: 'middle' });
+
+    const growth = row.change_7d === null ? 'n/a' : fmtPct(row.change_7d);
+    const growthColor = row.change_7d === null ? COLORS.textMuted : row.change_7d >= 0 ? COLORS.positive : COLORS.negative;
+    drawText(ctx, growth, 620, ry + 14, { font: '13px "IBM Plex Mono"', color: growthColor, baseline: 'middle' });
+
+    drawText(ctx, liqPct + '%', 740, ry + 14, { font: '13px "IBM Plex Mono"', color: liqTier.color, baseline: 'middle' });
+    drawText(ctx, holdPct + '%', 900, ry + 14, { font: '13px "IBM Plex Mono"', color: holdTier.color, baseline: 'middle' });
+    drawText(ctx, momPct + '%', 1060, ry + 14, { font: '13px "IBM Plex Mono"', color: momTier.color, baseline: 'middle' });
+
+    drawText(ctx, fmtUsd(row.implied_value_usd), 1220, ry + 14, { font: 'bold 13px "IBM Plex Mono"', color: COLORS.accent, baseline: 'middle' });
+  });
+
+  y += 500;
+
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, 40, y, WIDTH - 80, 220, 12);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.panelBorder;
+  ctx.stroke();
+
+  drawText(ctx, 'RISK TIER DISTRIBUTION', 60, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
+
+  const tiers = [
+    { label: 'LOW', color: COLORS.positive, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.75 && (r.holder_score || 0) >= 0.75).length },
+    { label: 'MEDIUM', color: COLORS.warn, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.5 && (r.liquidity_score || 0) < 0.75).length },
+    { label: 'HIGH', color: COLORS.danger, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.25 && (r.liquidity_score || 0) < 0.5).length },
+    { label: 'CRITICAL', color: '#ff0000', count: radar.rows.filter(r => (r.liquidity_score || 0) < 0.25).length },
+  ];
+
+  const maxCount = Math.max(...tiers.map(t => t.count));
+  tiers.forEach((tier, i) => {
+    const ty = y + 50 + i * 40;
+    const barWidth = maxCount > 0 ? ((tier.count / maxCount) * 400) : 0;
+    drawText(ctx, tier.label, 60, ty + 12, { font: 'bold 13px "IBM Plex Mono"', color: tier.color, baseline: 'middle' });
+    ctx.fillStyle = tier.color + '40';
+    drawRoundedRect(ctx, 180, ty, barWidth, 24, 6);
+    ctx.fill();
+    ctx.fillStyle = tier.color;
+    drawRoundedRect(ctx, 180, ty, Math.max(barWidth, 0), 24, 6);
+    ctx.fill();
+    drawText(ctx, String(tier.count) + ' tokens', 600 + barWidth, ty + 12, { font: '13px "IBM Plex Mono"', color: COLORS.textDim, baseline: 'middle' });
+  });
+
+  const outputPath = join(screenshotsDir, '01-market-overview.png');
+  mkdirSync(screenshotsDir, { recursive: true });
+  writeFileSync(outputPath, canvas.toBuffer('image/png'));
+  console.log(`Generated: ${outputPath}`);
   return outputPath;
 }
 
-async function generateFilteredScreenshot() {
+async function generateRiskLiquidityMatrix() {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
   const radar = loadRadarData();
 
-  const filtered = radar.rows.filter(r =>
-    (r.liquidity_score || 0) >= 0.7 &&
-    (r.change_7d || 0) > 0
-  ).slice(0, 15);
-
-  ctx.fillStyle = COLORS.canvas;
+  ctx.fillStyle = COLORS.bg;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  ctx.fillStyle = COLORS.surface;
-  ctx.fillRect(0, 0, WIDTH, 80);
-  ctx.strokeStyle = COLORS.border;
-  ctx.beginPath();
-  ctx.moveTo(0, 80);
-  ctx.lineTo(WIDTH, 80);
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let x = 40; x < WIDTH - 40; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 40);
+    ctx.lineTo(x, HEIGHT - 40);
+    ctx.stroke();
+  }
+  for (let y = 40; y < HEIGHT - 40; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(40, y);
+    ctx.lineTo(WIDTH - 40, y);
+    ctx.stroke();
+  }
+
+  let y = 50;
+  drawGlowText(ctx, 'TOKEN RADAR v2 — RISK & LIQUIDITY MATRIX', 60, y, {
+    font: 'bold 24px "IBM Plex Mono"',
+    color: COLORS.accent,
+    glowColor: COLORS.accentGlow
+  });
+  drawText(ctx, `Liquidity-to-MCap Health | Holder Concentration | Volume Anomaly Flags`, 60, y + 30, {
+    font: '12px "IBM Plex Mono"',
+    color: COLORS.textDim
+  });
+
+  y += 100;
+
+  const leftPanelW = 680;
+  const gap = 20;
+
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, 40, y, leftPanelW, 380, 12);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.panelBorder;
   ctx.stroke();
 
-  drawText(ctx, 'TOKEN RADAR v2', 50, 30, { font: 'bold 12px ui-monospace', color: COLORS.muted });
-  drawText(ctx, `Filtered: High Liquidity (≥70%) + Positive 7d Growth  |  ${filtered.length} results`, WIDTH - 60, 40, {
-    font: '12px system-ui',
-    color: COLORS.accent,
-    align: 'right'
-  });
+  drawText(ctx, 'LIQUIDITY DEPTH vs IMPLIED VALUE', 60, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
 
-  let y = 100;
-  const pills = [
-    { text: 'Liquidity ≥ 70%', color: COLORS.accent },
-    { text: '7d Growth > 0%', color: COLORS.positive },
-    { text: 'Pre-token only', color: COLORS.warning },
-  ];
-  let pillX = 60;
-  pills.forEach(pill => {
-    ctx.fillStyle = pill.color + '20';
-    drawRoundedRect(ctx, pillX, y, 160, 32, 16);
-    ctx.fill();
-    ctx.strokeStyle = pill.color;
+  const scatterData = radar.rows.slice(0, 30).map(r => ({
+    x: (r.liquidity_score || 0) * 100,
+    y: r.implied_value_usd,
+    name: r.name,
+    color: riskTier(r.liquidity_score || 0).color
+  }));
+
+  const maxX = 100;
+  const maxY = Math.max(...scatterData.map(d => d.y)) * 1.1;
+  const plotX = 80;
+  const plotY = y + 50;
+  const plotW = 600;
+  const plotH = 300;
+
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) {
+    const gx = plotX + (i / 5) * plotW;
+    ctx.beginPath();
+    ctx.moveTo(gx, plotY);
+    ctx.lineTo(gx, plotY + plotH);
     ctx.stroke();
-    drawText(ctx, pill.text, pillX + 80, y + 16, { font: 'bold 12px system-ui', color: pill.color, align: 'center', baseline: 'middle' });
-    pillX += 180;
+    drawText(ctx, Math.round(i * 20) + '%', gx, plotY + plotH + 18, { font: '10px "IBM Plex Mono"', color: COLORS.textMuted, align: 'center' });
+  }
+  for (let i = 0; i <= 5; i++) {
+    const gy = plotY + (i / 5) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(plotX, gy);
+    ctx.lineTo(plotX + plotW, gy);
+    ctx.stroke();
+    drawText(ctx, fmtUsd(maxY * (1 - i / 5)), plotX - 10, gy + 4, { font: '10px "IBM Plex Mono"', color: COLORS.textMuted, align: 'right' });
+  }
+
+  scatterData.forEach(d => {
+    const px = plotX + (d.x / maxX) * plotW;
+    const py = plotY + plotH - (d.y / maxY) * plotH;
+    ctx.fillStyle = d.color;
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fill();
   });
 
-  ctx.fillStyle = COLORS.surfaceElevated;
-  drawRoundedRect(ctx, pillX + 20, y, 120, 32, 8);
+  y += 400;
+
+  const rightPanelX = 40 + leftPanelW + gap;
+  const rightPanelW = WIDTH - 80 - leftPanelW - gap;
+
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, rightPanelX, y - 400, rightPanelW, 380, 12);
   ctx.fill();
-  drawText(ctx, 'Clear all', pillX + 80, y + 16, { font: '13px system-ui', color: COLORS.muted, align: 'center', baseline: 'middle' });
+  ctx.strokeStyle = COLORS.panelBorder;
+  ctx.stroke();
 
-  y += 60;
-  const columns = [
-    { title: 'Rank', x: 60, width: 50 },
-    { title: 'Protocol', x: 130, width: 300 },
-    { title: 'TVL', x: 450, width: 120 },
-    { title: '7d %', x: 580, width: 80 },
-    { title: 'Age', x: 680, width: 60 },
-    { title: 'Liq', x: 760, width: 60 },
-    { title: 'Hold', x: 840, width: 60 },
-    { title: 'Mom', x: 920, width: 60 },
-    { title: 'Implied Value', x: 1000, width: 160 },
-    { title: 'Risk', x: 1280, width: 100 },
-  ];
+  drawText(ctx, 'HOLDER CONCENTRATION / WHALE RISK', rightPanelX + 20, y - 380, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
 
-  drawTableHeader(ctx, columns, y);
-  y += 40;
+  const gaugeData = radar.rows.slice(0, 8).map(r => ({
+    name: r.name.length > 18 ? r.name.slice(0, 18) + '…' : r.name,
+    score: r.holder_score || 0,
+    color: riskTier(r.holder_score || 0).color
+  }));
 
-  filtered.forEach((row, i) => {
-    const growth = row.change_7d === null ? 'n/a' : fmtPct(row.change_7d);
-    const growthColor = row.change_7d === null ? COLORS.muted : row.change_7d >= 0 ? COLORS.positive : COLORS.negative;
-    const riskClass = (row.risk_flags && row.risk_flags.length >= 3) ? 'high' : (row.risk_flags && row.risk_flags.length >= 2) ? 'medium' : 'low';
-    const riskColors: Record<string, string> = { high: COLORS.negative, medium: COLORS.warning, low: COLORS.positive };
-
-    const rowData = [
-      { x: 60, text: String(row.rank) },
-      { x: 130, text: row.name, color: COLORS.ink },
-      { x: 450, text: fmtUsd(row.tvl_usd), color: COLORS.ink, font: '13px ui-monospace' },
-      { x: 580, text: growth, color: growthColor, font: '13px ui-monospace' },
-      { x: 680, text: fmtAge(row.age_days), color: COLORS.muted, font: '13px ui-monospace' },
-      { x: 760, text: Math.round((row.liquidity_score || 0) * 100) + '%', color: COLORS.positive, font: 'bold 13px ui-monospace' },
-      { x: 840, text: Math.round((row.holder_score || 0) * 100) + '%', color: COLORS.accent, font: '13px ui-monospace' },
-      { x: 920, text: Math.round((row.momentum_score || 0) * 100) + '%', color: COLORS.accent, font: '13px ui-monospace' },
-      { x: 1000, text: fmtUsd(row.implied_value_usd), color: COLORS.ink, font: 'bold 13px ui-monospace' },
-      { x: 1180, text: 'no token', color: COLORS.warning },
-      { x: 1280, text: row.risk_flags && row.risk_flags.length ? row.risk_flags.length + ' flags' : 'low risk', color: riskColors[riskClass] },
-    ];
-
-    drawTableRow(ctx, rowData, y, false);
-    y += 40;
+  gaugeData.forEach((g, i) => {
+    const gy = y - 360 + i * 45;
+    const barW = Math.round(g.score * 300);
+    drawText(ctx, g.name, rightPanelX + 20, gy + 10, { font: '12px "IBM Plex Mono"', color: COLORS.text });
+    ctx.fillStyle = COLORS.barBg;
+    drawRoundedRect(ctx, rightPanelX + 20, gy + 24, 300, 16, 8);
+    ctx.fill();
+    ctx.fillStyle = g.color;
+    drawRoundedRect(ctx, rightPanelX + 20, gy + 24, barW, 16, 8);
+    ctx.fill();
+    drawText(ctx, Math.round(g.score * 100) + '%', rightPanelX + 340, gy + 10, { font: 'bold 12px "IBM Plex Mono"', color: g.color });
   });
 
   y += 20;
-  const avgLiq = filtered.reduce((s, r) => s + (r.liquidity_score || 0), 0) / filtered.length;
-  const avgGrowth = filtered.reduce((s, r) => s + (r.change_7d || 0), 0) / filtered.length;
-  const avgImplied = filtered.reduce((s, r) => s + r.implied_value_usd, 0) / filtered.length;
 
-  ctx.fillStyle = COLORS.surface;
-  drawRoundedRect(ctx, 40, y, WIDTH - 80, 100, 12);
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, 40, y, leftPanelW, 380, 12);
   ctx.fill();
-  ctx.strokeStyle = COLORS.border;
+  ctx.strokeStyle = COLORS.panelBorder;
   ctx.stroke();
 
-  drawText(ctx, 'Filtered set summary', 60, y + 20, { font: 'bold 15px system-ui', color: COLORS.ink });
-  drawText(ctx, `Protocols: ${filtered.length}  |  Avg Liquidity: ${Math.round(avgLiq * 100)}%  |  Avg 7d Growth: ${avgGrowth.toFixed(2)}%  |  Avg Implied Value: ${fmtUsd(avgImplied)}`, 60, y + 50, { font: '13px system-ui', color: COLORS.muted });
+  drawText(ctx, 'ORGANIC VOLUME vs ANOMALY FLAGS', 60, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
 
-  const buffer = canvas.toBuffer('image/png');
-  const outputPath = join(screenshotsDir, '3-filtered.png');
-  writeFileSync(outputPath, buffer);
-  console.log(`Generated: ${outputPath} (${buffer.length} bytes)`);
+  const volData = radar.rows.slice(0, 30).map(r => ({
+    momentum: r.momentum_score || 0,
+    growth: r.change_7d || 0,
+    name: r.name,
+    color: riskTier(r.momentum_score || 0).color
+  }));
+
+  const volMaxX = 100;
+  const volMinY = -50;
+  const volMaxY = 150;
+  const volPlotX = 80;
+  const volPlotY = y + 50;
+  const volPlotW = 600;
+  const volPlotH = 300;
+
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) {
+    const gx = volPlotX + (i / 5) * volPlotW;
+    ctx.beginPath();
+    ctx.moveTo(gx, volPlotY);
+    ctx.lineTo(gx, volPlotY + volPlotH);
+    ctx.stroke();
+    drawText(ctx, Math.round(i * 20) + '%', gx, volPlotY + volPlotH + 18, { font: '10px "IBM Plex Mono"', color: COLORS.textMuted, align: 'center' });
+  }
+  for (let i = 0; i <= 5; i++) {
+    const gy = volPlotY + (i / 5) * volPlotH;
+    ctx.beginPath();
+    ctx.moveTo(volPlotX, gy);
+    ctx.lineTo(volPlotX + volPlotW, gy);
+    ctx.stroke();
+    const val = volMinY + (1 - i / 5) * (volMaxY - volMinY);
+    drawText(ctx, val >= 0 ? '+' + Math.round(val) + '%' : Math.round(val) + '%', volPlotX - 10, gy + 4, { font: '10px "IBM Plex Mono"', color: COLORS.textMuted, align: 'right' });
+  }
+
+  volData.forEach(d => {
+    const px = volPlotX + (d.momentum / 1) * volPlotW;
+    const py = volPlotY + volPlotH - ((d.growth - volMinY) / (volMaxY - volMinY)) * volPlotH;
+    ctx.fillStyle = d.color;
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.fillStyle = COLORS.panel;
+  drawRoundedRect(ctx, rightPanelX, y, rightPanelW, 380, 12);
+  ctx.fill();
+  ctx.strokeStyle = COLORS.panelBorder;
+  ctx.stroke();
+
+  drawText(ctx, 'ANOMALY DETECTION SUMMARY', rightPanelX + 20, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
+
+  const anomalies = radar.rows.slice(0, 8).map(r => ({
+    name: r.name,
+    flags: r.risk_flags || [],
+    risk: riskTier(r.liquidity_score || 0).label
+  }));
+
+  anomalies.forEach((a, i) => {
+    const ay = y + 50 + i * 40;
+    drawText(ctx, a.name.length > 22 ? a.name.slice(0, 22) + '…' : a.name, rightPanelX + 20, ay + 10, { font: '12px "IBM Plex Mono"', color: COLORS.text });
+    if (a.flags.length > 0) {
+      a.flags.slice(0, 2).forEach((f, fi) => {
+        drawText(ctx, '⚠ ' + f, rightPanelX + 20, ay + 26 + fi * 14, { font: '10px "IBM Plex Mono"', color: COLORS.warn });
+      });
+    }
+    const tier = riskTier(0.25);
+    drawText(ctx, a.risk, rightPanelX + 400, ay + 10, { font: 'bold 12px "IBM Plex Mono"', color: riskTier(a.risk === 'LOW' ? 0.8 : a.risk === 'MEDIUM' ? 0.6 : a.risk === 'HIGH' ? 0.3 : 0.1).color });
+  });
+
+  const outputPath = join(screenshotsDir, '02-risk-liquidity-matrix.png');
+  writeFileSync(outputPath, canvas.toBuffer('image/png'));
+  console.log(`Generated: ${outputPath}`);
+  return outputPath;
+}
+
+async function generateTopCandidatesDeepDive() {
+  const canvas = createCanvas(WIDTH, HEIGHT);
+  const ctx = canvas.getContext('2d');
+  const radar = loadRadarData();
+
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.strokeStyle = COLORS.grid;
+  ctx.lineWidth = 1;
+  for (let x = 40; x < WIDTH - 40; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 40);
+    ctx.lineTo(x, HEIGHT - 40);
+    ctx.stroke();
+  }
+  for (let y = 40; y < HEIGHT - 40; y += 40) {
+    ctx.beginPath();
+    ctx.moveTo(40, y);
+    ctx.lineTo(WIDTH - 40, y);
+    ctx.stroke();
+  }
+
+  const top3 = radar.rows.slice(0, 3);
+
+  let y = 50;
+  drawGlowText(ctx, 'TOKEN RADAR v2 — TOP CANDIDATES DEEP DIVE', 60, y, {
+    font: 'bold 24px "IBM Plex Mono"',
+    color: COLORS.accent,
+    glowColor: COLORS.accentGlow
+  });
+  drawText(ctx, `Detailed breakdown: Sub-scores | Bullish Catalysts | Red Flags | Actionable Verdicts`, 60, y + 30, {
+    font: '12px "IBM Plex Mono"',
+    color: COLORS.textDim
+  });
+
+  const cardW = 440;
+  const cardGap = 20;
+  const startX = 40;
+
+  top3.forEach((row, idx) => {
+    const cx = startX + idx * (cardW + cardGap);
+    const cy = 120;
+
+    const liqScore = Math.round((row.liquidity_score || 0) * 100);
+    const holdScore = Math.round((row.holder_score || 0) * 100);
+    const momScore = Math.round((row.momentum_score || 0) * 100);
+    const composite = Math.round((liqScore + holdScore + momScore) / 3);
+    const tier = riskTier(composite / 100);
+
+    ctx.fillStyle = COLORS.panel;
+    drawRoundedRect(ctx, cx, cy, cardW, 750, 12);
+    ctx.fill();
+    ctx.strokeStyle = tier.color + '60';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.lineWidth = 1;
+
+    drawGlowText(ctx, '#' + row.rank + '  ' + row.name, cx + 20, cy + 20, {
+      font: 'bold 18px "IBM Plex Mono"',
+      color: tier.color,
+      glowColor: tier.glow
+    });
+    drawText(ctx, 'Chains: ' + row.chains.join(', '), cx + 20, cy + 50, { font: '11px "IBM Plex Mono"', color: COLORS.textDim });
+    drawText(ctx, 'TVL: ' + fmtUsd(row.tvl_usd) + '  |  7D: ' + (row.change_7d === null ? 'n/a' : fmtPct(row.change_7d)) + '  |  Age: ' + fmtAge(row.age_days), cx + 20, cy + 70, { font: '11px "IBM Plex Mono"', color: COLORS.textDim });
+
+    drawText(ctx, 'COMPOSITE SCORE: ' + composite + '/100', cx + 20, cy + 110, { font: 'bold 14px "IBM Plex Mono"', color: tier.color });
+    drawText(ctx, 'TIER: ' + tier.label, cx + 20, cy + 135, { font: 'bold 13px "IBM Plex Mono"', color: tier.color });
+
+    const subScores = [
+      { label: 'LIQUIDITY DEPTH', score: liqScore, max: 100, color: riskTier(liqScore / 100).color },
+      { label: 'HOLDER SAFETY', score: holdScore, max: 100, color: riskTier(holdScore / 100).color },
+      { label: 'MOMENTUM', score: momScore, max: 100, color: riskTier(momScore / 100).color },
+    ];
+
+    let sy = cy + 180;
+    drawText(ctx, 'SUB-SCORES', cx + 20, sy, { font: 'bold 12px "IBM Plex Mono"', color: COLORS.accent });
+    subScores.forEach((s, si) => {
+      const barY = sy + 25 + si * 30;
+      drawText(ctx, s.label, cx + 20, barY, { font: '11px "IBM Plex Mono"', color: COLORS.text });
+      ctx.fillStyle = COLORS.barBg;
+      drawRoundedRect(ctx, cx + 20, barY + 18, 300, 14, 7);
+      ctx.fill();
+      ctx.fillStyle = s.color;
+      drawRoundedRect(ctx, cx + 20, barY + 18, (s.score / s.max) * 300, 14, 7);
+      ctx.fill();
+      drawText(ctx, s.score + '%', cx + 340, barY, { font: 'bold 12px "IBM Plex Mono"', color: s.color });
+    });
+
+    sy += 130;
+    drawText(ctx, 'BULLISH CATALYSTS', cx + 20, sy, { font: 'bold 12px "IBM Plex Mono"', color: COLORS.positive });
+    const bullish = [
+      liqScore >= 70 ? 'Strong liquidity depth' : 'Adequate liquidity',
+      holdScore >= 70 ? 'Healthy holder distribution' : 'Moderate concentration',
+      momScore >= 60 ? 'Positive volume momentum' : 'Neutral momentum',
+      row.change_7d !== null && row.change_7d > 10 ? 'Strong 7D TVL growth' : 'Stable TVL',
+      row.chains.length >= 3 ? 'Multi-chain deployment' : 'Single-chain focus',
+    ].filter(Boolean).slice(0, 3);
+
+    bullish.forEach((b, bi) => {
+      drawText(ctx, '▸ ' + b, cx + 20, sy + 22 + bi * 18, { font: '11px "IBM Plex Mono"', color: COLORS.positive });
+    });
+
+    sy += 90;
+    drawText(ctx, 'RED FLAGS', cx + 20, sy, { font: 'bold 12px "IBM Plex Mono"', color: COLORS.danger });
+    const redFlags = [
+      liqScore < 50 ? 'Low liquidity depth' : null,
+      holdScore < 50 ? 'High holder concentration' : null,
+      momScore < 40 ? 'Weak volume momentum' : null,
+      row.change_7d !== null && row.change_7d < -15 ? 'TVL declining sharply' : null,
+      row.chains.length === 1 && row.tvl_usd < 100_000_000 ? 'Single-chain concentration risk' : null,
+    ].filter(Boolean).slice(0, 3);
+
+    if (redFlags.length === 0) redFlags.push('No significant red flags detected');
+
+    redFlags.forEach((r, ri) => {
+      drawText(ctx, '▸ ' + r, cx + 20, sy + 22 + ri * 18, { font: '11px "IBM Plex Mono"', color: COLORS.danger });
+    });
+
+    sy += 90;
+    drawText(ctx, 'VERDICT', cx + 20, sy, { font: 'bold 12px "IBM Plex Mono"', color: COLORS.accent });
+    let verdict = '';
+    if (composite >= 75) verdict = 'STRONG BUY — Excellent fundamentals across all dimensions. Prime airdrop farming candidate.';
+    else if (composite >= 60) verdict = 'BUY — Solid fundamentals with minor concerns. Worth allocating farming capital.';
+    else if (composite >= 40) verdict = 'CAUTION — Mixed signals. Small position only, monitor closely.';
+    else verdict = 'AVOID — Significant risks outweigh potential rewards.';
+
+    drawText(ctx, verdict, cx + 20, sy + 22, { font: '12px "IBM Plex Mono"', color: tier.color, maxWidth: cardW - 40 });
+  });
+
+  const outputPath = join(screenshotsDir, '03-top-candidates-deep-dive.png');
+  writeFileSync(outputPath, canvas.toBuffer('image/png'));
+  console.log(`Generated: ${outputPath}`);
   return outputPath;
 }
 
 async function main() {
-  console.log('Generating screenshots...');
-
-  await generateBoardScreenshot();
-  await generateDetailScreenshot();
-  await generateFilteredScreenshot();
-
+  console.log('Generating publication-grade screenshots...');
+  await generateMarketOverview();
+  await generateRiskLiquidityMatrix();
+  await generateTopCandidatesDeepDive();
   console.log('All screenshots generated successfully!');
 }
 

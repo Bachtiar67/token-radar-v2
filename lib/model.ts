@@ -1,6 +1,6 @@
-// Token Radar v2 - Enhanced Multi-Factor Scoring Model
+// Token Radar v2 - Enhanced Multi-Factor Scoring Model v2
 // Deterministic, offline-only, runs on Node 22+ standard library
-// No external dependencies at runtime, fully deterministic SHA-256 output
+// Deep scoring: Liquidity/Depth, Holder Safety, Momentum, Cohort Ranking
 
 export interface SnapshotProtocol {
   slug: string;
@@ -53,10 +53,28 @@ export const MODEL: ModelConstants = {
   risk_penalty_max: 0.30,
 };
 
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-2.1';
 
 export const EARLY_ROWS = 160;
 export const LIVE_ROWS = 24;
+
+export interface SubScores {
+  liquidity_depth: number;
+  holder_safety: number;
+  momentum_organic: number;
+  cohort_percentile: number;
+}
+
+export interface TokenAnalysis {
+  composite_score: number;
+  sub_scores: SubScores;
+  risk_tier: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  confidence: number;
+  bullish_signals: string[];
+  red_flags: string[];
+  cohort_percentile: number;
+  verdict: string;
+}
 
 export interface BoardRow {
   rank: number;
@@ -86,6 +104,7 @@ export interface BoardRow {
     age_days: number | null;
   };
   farm_steps: string[];
+  analysis?: TokenAnalysis;
 }
 
 export interface RadarRow {
@@ -118,6 +137,18 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
+export interface ExecutiveSummary {
+  market_regime: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+  total_scanned: number;
+  pass_count: number;
+  watch_count: number;
+  reject_count: number;
+  median_liquidity: number;
+  top_pick: { slug: string; name: string; score: number } | null;
+  highest_risk_trap: { slug: string; name: string; score: number } | null;
+  key_takeaways: string[];
+}
+
 export interface RadarData {
   as_of: string;
   source: string;
@@ -130,6 +161,8 @@ export interface RadarData {
   live_size: number;
   rows: RadarRow[];
   live: LiveRow[];
+  executive_summary?: ExecutiveSummary;
+  token_analyses?: Record<string, TokenAnalysis>;
 }
 
 export class SnapshotError extends Error {
@@ -163,8 +196,12 @@ function hashToFloat(str: string): number {
 }
 
 function deterministicRandom(seed: string, min: number, max: number): number {
-  const hash = hashToFloat(seed);
-  return min + hash * (max - min);
+  const h = hashToFloat(seed);
+  return min + h * (max - min);
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
 }
 
 export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string): number {
@@ -172,7 +209,7 @@ export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string):
   const age = ageDays(asOf, protocol.listed_at) ?? MODEL.unknown_age_days;
   const chainCount = protocol.chains.length;
 
-  let score = 0.5;
+  let score = 0.4;
 
   if (tvl >= 1_000_000_000) score += 0.25;
   else if (tvl >= 500_000_000) score += 0.2;
@@ -180,7 +217,7 @@ export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string):
   else if (tvl >= 50_000_000) score += 0.1;
   else score += 0.05;
 
-  if (age >= 730) score += 0.1;
+  if (age >= 730) score += 0.12;
   else if (age >= 365) score += 0.08;
   else if (age >= 180) score += 0.05;
   else score += 0.02;
@@ -193,17 +230,17 @@ export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string):
   const categoryHash = hashToFloat(protocol.category || 'unknown');
   score += (categoryHash - 0.5) * 0.06;
 
-  return Math.max(0.1, Math.min(1.0, score));
+  return clamp(score, 0.1, 1.0);
 }
 
 export function computeHolderScore(protocol: SnapshotProtocol, asOf: string): number {
   const tvl = protocol.tvl_usd;
   const age = ageDays(asOf, protocol.listed_at) ?? MODEL.unknown_age_days;
 
-  let score = 0.5;
+  let score = 0.45;
 
-  if (tvl >= 5_000_000_000) score += 0.2;
-  else if (tvl >= 1_000_000_000) score += 0.15;
+  if (tvl >= 5_000_000_000) score += 0.18;
+  else if (tvl >= 1_000_000_000) score += 0.14;
   else if (tvl >= 100_000_000) score += 0.1;
   else score += 0.05;
 
@@ -213,21 +250,21 @@ export function computeHolderScore(protocol: SnapshotProtocol, asOf: string): nu
   else if (age >= 180) score += 0.04;
   else score += 0.02;
 
-  const slugHash = hashToFloat(protocol.slug);
-  score += (slugHash - 0.5) * 0.08;
+  const slugHash = hashToFloat(protocol.slug + 'holder');
+  score += (slugHash - 0.5) * 0.1;
 
-  return Math.max(0.1, Math.min(1.0, score));
+  return clamp(score, 0.1, 1.0);
 }
 
 export function computeMomentumScore(protocol: SnapshotProtocol): number {
   const growth = finite(protocol.change_7d, 0);
   const tvl = protocol.tvl_usd;
 
-  let score = 0.5;
+  let score = 0.45;
 
-  if (growth >= 50) score += 0.3;
-  else if (growth >= 20) score += 0.2;
-  else if (growth >= 10) score += 0.15;
+  if (growth >= 50) score += 0.25;
+  else if (growth >= 20) score += 0.18;
+  else if (growth >= 10) score += 0.14;
   else if (growth >= 5) score += 0.1;
   else if (growth >= 0) score += 0.05;
   else if (growth >= -10) score -= 0.05;
@@ -239,9 +276,9 @@ export function computeMomentumScore(protocol: SnapshotProtocol): number {
   else if (tvl >= 100_000_000 && growth > 20) score += 0.08;
 
   const slugHash = hashToFloat(protocol.slug + 'momentum');
-  score += (slugHash - 0.5) * 0.06;
+  score += (slugHash - 0.5) * 0.08;
 
-  return Math.max(0.1, Math.min(1.0, score));
+  return clamp(score, 0.1, 1.0);
 }
 
 export function computeRiskFlags(protocol: SnapshotProtocol, asOf: string): { flags: string[]; penalty: number } {
@@ -298,20 +335,32 @@ export function computeRiskFlags(protocol: SnapshotProtocol, asOf: string): { fl
     penalty += 0.05;
   }
 
-  const maxPenalty = MODEL.risk_penalty_max;
-  penalty = Math.min(penalty, maxPenalty);
+  penalty = Math.min(penalty, MODEL.risk_penalty_max);
 
   return { flags, penalty };
+}
+
+function percentileRank(arr: number[], value: number): number {
+  const sorted = [...arr].sort((a, b) => a - b);
+  let count = 0;
+  for (const v of sorted) {
+    if (v <= value) count++;
+    else break;
+  }
+  return (count / sorted.length) * 100;
 }
 
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
-  model: ModelConstants
-): { implied: number; growthPct: number; growthMult: number; maturityMult: number; liquidityScore: number; holderScore: number; momentumScore: number; riskFlags: string[]; riskPenalty: number; age: number | null } {
+  model: ModelConstants,
+  allLiquidity: number[],
+  allHolder: number[],
+  allMomentum: number[]
+): { implied: number; growthPct: number; growthMult: number; maturityMult: number; liquidityScore: number; holderScore: number; momentumScore: number; riskFlags: string[]; riskPenalty: number; age: number | null; subScores: SubScores; cohortPercentile: number } {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
-  const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
+  const growthPct = clamp(rawGrowth, model.growth_floor, model.growth_cap);
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
@@ -321,11 +370,60 @@ export function impliedValue(
   const momentumScore = computeMomentumScore(protocol);
   const { flags: riskFlags, penalty: riskPenalty } = computeRiskFlags(protocol, asOf);
 
+  const liqPct = percentileRank(allLiquidity, liquidityScore);
+  const holdPct = percentileRank(allHolder, holderScore);
+  const momPct = percentileRank(allMomentum, momentumScore);
+  const cohortPercentile = (liqPct + holdPct + momPct) / 3;
+
   const base = protocol.tvl_usd * model.base_multiple;
   const factorMult = 1 + (liquidityScore - 0.5) * model.liquidity_weight + (holderScore - 0.5) * model.holder_weight + (momentumScore - 0.5) * model.momentum_weight;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult * factorMult * (1 - riskPenalty)));
 
-  return { implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age };
+  const subScores: SubScores = {
+    liquidity_depth: liquidityScore,
+    holder_safety: holderScore,
+    momentum_organic: momentumScore,
+    cohort_percentile: cohortPercentile / 100
+  };
+
+  return { implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age, subScores, cohortPercentile };
+}
+
+function riskTier(score: number): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' {
+  if (score >= 0.75) return 'LOW';
+  if (score >= 0.5) return 'MEDIUM';
+  if (score >= 0.25) return 'HIGH';
+  return 'CRITICAL';
+}
+
+function generateBullishSignals(p: SnapshotProtocol, liq: number, hold: number, mom: number, growth: number | null, age: number | null): string[] {
+  const signals: string[] = [];
+  if (liq >= 0.7) signals.push('Deep liquidity pools');
+  if (hold >= 0.7) signals.push('Healthy holder distribution');
+  if (mom >= 0.6) signals.push('Strong organic volume momentum');
+  if (growth !== null && growth > 10) signals.push('Rapid TVL growth (>10% 7d)');
+  if (age !== null && age > 365) signals.push('Established protocol (>1 year)');
+  if (p.chains.length >= 3) signals.push('Multi-chain deployment');
+  if (p.tvl_usd > 100_000_000) signals.push('Significant TVL (> $100M)');
+  return signals.length > 0 ? signals : ['Baseline fundamentals'];
+}
+
+function generateRedFlags(p: SnapshotProtocol, liq: number, hold: number, mom: number, growth: number | null, age: number | null, riskFlags: string[]): string[] {
+  const flags = [...riskFlags];
+  if (liq < 0.4) flags.push('Shallow liquidity depth');
+  if (hold < 0.4) flags.push('High holder concentration risk');
+  if (mom < 0.35) flags.push('Weak organic volume');
+  if (growth !== null && growth < -15) flags.push('Accelerating TVL decline');
+  if (age !== null && age < 90) flags.push('Very new protocol');
+  if (p.chains.length === 1 && p.tvl_usd < 100_000_000) flags.push('Single-chain concentration');
+  return flags.length > 0 ? flags : ['No material red flags'];
+}
+
+function generateVerdict(composite: number, tier: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'): string {
+  if (composite >= 75) return 'STRONG BUY — Excellent fundamentals across all dimensions. Prime airdrop farming candidate.';
+  if (composite >= 60) return 'BUY — Solid fundamentals with minor concerns. Worth allocating farming capital.';
+  if (composite >= 40) return 'CAUTION — Mixed signals. Small position only, monitor closely.';
+  return 'AVOID — Significant risks outweigh potential rewards.';
 }
 
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
@@ -365,42 +463,74 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 
   for (const p of early) chosen.set(p.slug, p);
 
+  const allLiquidity: number[] = [];
+  const allHolder: number[] = [];
+  const allMomentum: number[] = [];
+
+  [...chosen.values()].forEach(p => {
+    allLiquidity.push(computeLiquidityScore(p, snapshot.as_of));
+    allHolder.push(computeHolderScore(p, snapshot.as_of));
+    allMomentum.push(computeMomentumScore(p));
+  });
+
   const scored = [...chosen.values()].map((p) => {
-    const { implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age } = impliedValue(p, snapshot.as_of, model);
-    return { p, implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age };
+    const { implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age, subScores, cohortPercentile } = impliedValue(p, snapshot.as_of, model, allLiquidity, allHolder, allMomentum);
+    return { p, implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age, subScores, cohortPercentile };
   });
 
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
 
-  return scored.map((s, i) => ({
-    rank: i + 1,
-    slug: s.p.slug,
-    name: s.p.name,
-    category: s.p.category,
-    chains: s.p.chains,
-    tvl_usd: s.p.tvl_usd,
-    change_7d: s.p.change_7d,
-    mcap_usd: s.p.mcap_usd,
-    listed_at: s.p.listed_at,
-    gecko_id: s.p.gecko_id,
-    symbol: s.p.symbol,
-    token_status: 'pre-token',
-    age_days: s.age,
-    implied_value_usd: s.implied,
-    model: {
-      base_multiple: model.base_multiple,
-      growth_pct: s.growthPct,
-      growth_multiplier: round4(s.growthMult),
-      maturity_multiplier: round4(s.maturityMult),
-      liquidity_score: round4(s.liquidityScore),
-      holder_score: round4(s.holderScore),
-      momentum_score: round4(s.momentumScore),
-      risk_flags: s.riskFlags,
-      risk_penalty: round4(s.riskPenalty),
+  const boardRows = scored.map((s, i) => {
+    const composite = Math.round((s.subScores.liquidity_depth + s.subScores.holder_safety + s.subScores.momentum_organic) * 100 / 3);
+    const tier = riskTier(composite / 100);
+    const bullish = generateBullishSignals(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age);
+    const redFlags = generateRedFlags(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age, s.riskFlags);
+    const verdict = generateVerdict(composite, tier);
+
+    const analysis: TokenAnalysis = {
+      composite_score: composite,
+      sub_scores: s.subScores,
+      risk_tier: tier,
+      confidence: clamp(0.5 + (s.cohortPercentile / 100) * 0.4, 0.5, 0.9),
+      bullish_signals: bullish,
+      red_flags: redFlags,
+      cohort_percentile: Math.round(s.cohortPercentile),
+      verdict
+    };
+
+    return {
+      rank: i + 1,
+      slug: s.p.slug,
+      name: s.p.name,
+      category: s.p.category,
+      chains: s.p.chains,
+      tvl_usd: s.p.tvl_usd,
+      change_7d: s.p.change_7d,
+      mcap_usd: s.p.mcap_usd,
+      listed_at: s.p.listed_at,
+      gecko_id: s.p.gecko_id,
+      symbol: s.p.symbol,
+      token_status: 'pre-token',
       age_days: s.age,
-    },
-    farm_steps: farmSteps(s.p, s.age).map(stepText),
-  }));
+      implied_value_usd: s.implied,
+      model: {
+        base_multiple: model.base_multiple,
+        growth_pct: s.growthPct,
+        growth_multiplier: round4(s.growthMult),
+        maturity_multiplier: round4(s.maturityMult),
+        liquidity_score: round4(s.liquidityScore),
+        holder_score: round4(s.holderScore),
+        momentum_score: round4(s.momentumScore),
+        risk_flags: s.riskFlags,
+        risk_penalty: round4(s.riskPenalty),
+        age_days: s.age,
+      },
+      farm_steps: farmSteps(s.p, s.age).map(stepText),
+      analysis
+    };
+  });
+
+  return boardRows;
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -458,36 +588,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   return [
-    {
-      text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
-      cost: 'under $3 of gas for the first transaction',
-      time: '5 minutes',
-    },
-    {
-      text: action,
-      cost: `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`,
-      time: '15 minutes to set up',
-    },
-    {
-      text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`,
-      cost: 'about $2 of gas a week',
-      time: '10 minutes a week',
-    },
-    {
-      text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`,
-      cost: `the $${capital} stays in the position`,
-      time: `${hold} days`,
-    },
-    {
-      text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`,
-      cost: 'no fee to check, and never pay to claim',
-      time: '10 minutes',
-    },
-    {
-      text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`,
-      cost: 'nothing but the log',
-      time: '5 minutes',
-    },
+    { text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`, cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: action, cost: `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`, time: '15 minutes to set up' },
+    { text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`, cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`, cost: `the $${capital} stays in the position`, time: `${hold} days` },
+    { text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`, cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
+    { text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`, cost: 'nothing but the log', time: '5 minutes' },
   ];
 }
 
@@ -529,10 +635,47 @@ export function radarRow(row: BoardRow): RadarRow {
   };
 }
 
+export function buildExecutiveSummary(board: BoardRow[], snapshot: Snapshot): ExecutiveSummary {
+  const passCount = board.filter(r => (r.analysis?.composite_score ?? 0) >= 75).length;
+  const watchCount = board.filter(r => (r.analysis?.composite_score ?? 0) >= 50 && (r.analysis?.composite_score ?? 0) < 75).length;
+  const rejectCount = board.filter(r => (r.analysis?.composite_score ?? 0) < 50).length;
+  const medianLiq = board.map(r => r.analysis?.sub_scores.liquidity_depth ?? 0).sort((a, b) => a - b)[Math.floor(board.length / 2)];
+
+  const marketRegime = passCount > board.length * 0.3 ? 'BULLISH' : passCount > board.length * 0.15 ? 'NEUTRAL' : 'BEARISH';
+
+  const topPick = board[0] ? { slug: board[0].slug, name: board[0].name, score: board[0].analysis?.composite_score ?? 0 } : null;
+  const highestRisk = board[board.length - 1] ? { slug: board[board.length - 1].slug, name: board[board.length - 1].name, score: board[board.length - 1].analysis?.composite_score ?? 0 } : null;
+
+  const keyTakeaways = [
+    `${passCount} protocols (${Math.round(passCount / board.length * 100)}%) score STRONG — prime farming targets`,
+    `${watchCount} protocols (${Math.round(watchCount / board.length * 100)}%) in WATCH zone — monitor for entry`,
+    `${rejectCount} protocols (${Math.round(rejectCount / board.length * 100)}%) flagged HIGH/CRITICAL — avoid`,
+    `Median liquidity depth: ${Math.round(medianLiq * 100)}% — ${medianLiq > 0.6 ? 'healthy' : medianLiq > 0.4 ? 'moderate' : 'thin'}`,
+    `Market regime: ${marketRegime} — ${marketRegime === 'BULLISH' ? 'broad strength' : marketRegime === 'NEUTRAL' ? 'mixed signals' : 'risk-off environment'}`
+  ];
+
+  return {
+    market_regime: marketRegime,
+    total_scanned: board.length,
+    pass_count: passCount,
+    watch_count: watchCount,
+    reject_count: rejectCount,
+    median_liquidity: Math.round(medianLiq * 100),
+    top_pick: topPick,
+    highest_risk_trap: highestRisk,
+    key_takeaways: keyTakeaways
+  };
+}
+
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const board = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+
+  const executiveSummary = buildExecutiveSummary(board, snapshot);
+  const tokenAnalyses: Record<string, TokenAnalysis> = {};
+  board.forEach(r => { if (r.analysis) tokenAnalyses[r.slug] = r.analysis; });
+
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -545,6 +688,8 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_size: live.length,
     rows: board.map(radarRow),
     live,
+    executive_summary: executiveSummary,
+    token_analyses: tokenAnalyses
   };
   return { board, radar };
 }

@@ -1,0 +1,24 @@
+{
+  "name": "token-radar-v2",
+  "version": "2.0.0",
+  "description": "Token Launch Radar v2 - Multi-factor scoring with deterministic offline execution",
+  "main": "src/main.ts",
+  "scripts": {
+    "build": "node src/main.ts --input /input/snapshot.json --output output",
+    "start": "node src/main.ts --input /input/snapshot.json --output output",
+    "screenshots": "node src/generate-screenshots.ts",
+    "verify": "node src/verify-determinism.ts",
+    "test": "node --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.65"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "type": "module"
+}

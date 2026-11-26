@@ -4,6 +4,10 @@
 
 Built for the make.fun `token-radar-01` competition. Runs on Node 22+ standard library only — no network, no external dependencies at runtime, fully deterministic (identical SHA-256 output on repeated runs).
 
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v2/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v2/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
 ## Features
 
 - **Multi-factor smart scoring**: Combines TVL, 7-day growth, protocol age, liquidity depth, holder distribution, volume momentum, and risk flags
@@ -89,7 +93,7 @@ All scores are deterministic — derived from snapshot fields via hash-based pse
 
 ```bash
 $ node src/cli.ts --input input/snapshot.json --verify
-[cli] Running determinism verification (2 runs)...
+[cli] Running determinism verification (2 runs)....
 [cli] Run 1...
 [cli] Run 2...
 [cli] Run 1 dossier SHA-256: c0193c3fa2ca3ae43c5e3947286c0fa9db883b253390288dd2be03de3459faf9

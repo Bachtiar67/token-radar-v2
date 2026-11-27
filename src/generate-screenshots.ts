@@ -132,8 +132,15 @@ function drawGlowText(ctx: CanvasRenderingContext2D, text: string, x: number, y:
 }
 
 function loadRadarData() {
-  const dataPath = join(outputDir, 'data.js');
-  if (!existsSync(dataPath)) {
+  const envOut = process.env.MAKEFUN_OUTPUT_DIR;
+  const candidatePaths = [
+    envOut ? join(envOut, 'data.js') : null,
+    join(projectRoot, 'output', 'data.js'),
+    join(projectRoot, 'output-test', 'data.js'),
+  ].filter((p): p is string => Boolean(p));
+
+  const dataPath = candidatePaths.find(p => existsSync(p));
+  if (!dataPath) {
     throw new Error('data.js not found. Run main.ts first.');
   }
   const content = readFileSync(dataPath, 'utf8');

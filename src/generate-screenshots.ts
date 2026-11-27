@@ -358,20 +358,32 @@ async function generateMarketOverview() {
     { label: 'CRITICAL', color: '#ff0000', count: radar.rows.filter(r => tierOf(r) === 'CRITICAL').length },
   ];
 
-  const maxCount = Math.max(...tiers.map(t => t.count));
+  const totalTokens = radar.rows.length;
+  const trackStartX = 180;
+  const trackEndX = WIDTH - 180;
+  const trackWidth = trackEndX - trackStartX;
+
   tiers.forEach((tier, i) => {
     const ty = y + 50 + i * 40;
-    const barWidth = maxCount > 0 ? ((tier.count / maxCount) * 400) : 0;
+    const barWidth = tier.count > 0 ? Math.round((tier.count / totalTokens) * trackWidth) : 0;
+
     drawText(ctx, tier.label, 60, ty + 12, { font: 'bold 13px "IBM Plex Mono"', color: tier.color, baseline: 'middle' });
-    ctx.fillStyle = tier.color + '40';
-    drawRoundedRect(ctx, 180, ty, barWidth, 24, 6);
+
+    // Draw track background (full width)
+    ctx.fillStyle = tier.color + '20';
+    drawRoundedRect(ctx, trackStartX, ty, trackWidth, 24, 6);
     ctx.fill();
-    ctx.fillStyle = tier.color;
-    drawRoundedRect(ctx, 180, ty, Math.max(barWidth, 0), 24, 6);
-    ctx.fill();
-    // Add hatch for color-blind accessibility
-    drawHatch(ctx, 180, ty, Math.max(barWidth, 0), 24, 'rgba(0,0,0,0.25)', 6);
-    drawText(ctx, String(tier.count) + ' tokens', 600 + barWidth, ty + 12, { font: '13px "IBM Plex Mono"', color: COLORS.textDim, baseline: 'middle' });
+
+    // Draw filled bar only if count > 0 (avoids zero-count sliver artifact)
+    if (tier.count > 0) {
+      ctx.fillStyle = tier.color;
+      drawRoundedRect(ctx, trackStartX, ty, barWidth, 24, 6);
+      ctx.fill();
+      // Add hatch for color-blind accessibility
+      drawHatch(ctx, trackStartX, ty, barWidth, 24, 'rgba(0,0,0,0.25)', 6);
+    }
+
+    drawText(ctx, String(tier.count) + ' tokens', trackEndX + 10, ty + 12, { font: '13px "IBM Plex Mono"', color: COLORS.textDim, baseline: 'middle' });
   });
 
   const outputPath = join(screenshotsDir, '01-market-overview.png');

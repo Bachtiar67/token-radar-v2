@@ -59,7 +59,63 @@ token-radar-v2/
 └── .gitignore
 ```
 
-## Scoring Model (radar-2)
+## Architecture Diagram (ASCII)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TOKEN RADAR v2 PIPELINE                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+                    ┌───────────────────────────┐
+                    │   input/snapshot.json     │
+                    │   (DefiLlama protocols,   │
+                    │    758 rows, as_of date)  │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+                    ┌───────────────────────────┐
+                    │      lib/model.ts         │
+                    │  ┌─────────────────────┐  │
+                    │  │ buildBoard()        │  │
+                    │  │  • computeLiquidity │  │
+                    │  │  • computeHolder    │  │
+                    │  │  • computeMomentum  │  │
+                    │  │  • impliedValue()   │  │
+                    │  │  • percentileRank   │  │
+                    │  │  • generateVerdict  │  │
+                    │  └─────────────────────┘  │
+                    │         radar-2.1         │
+                    └─────────────┬─────────────┘
+                                  │
+              ┌───────────────────┼───────────────────┐
+              ▼                   ▼                   ▼
+    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+    │ output/board.json│ │ output/data.js  │ │ output/screenshots/│
+    │ (200 ranked rows)│ │ (window.RADAR)  │ │ (3 PNG 1440×900)│
+    └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+             │                   │                   │
+             └───────────────────┼───────────────────┘
+                                 ▼
+                    ┌───────────────────────────┐
+                    │   vendor/makefun-board.ts │
+                    │      buildDossier()       │
+                    │  • executive_summary      │
+                    │  • token_analyses (200)   │
+                    │  • screenshots + markdown │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+                    ┌───────────────────────────┐
+                    │   output/dossier.json     │
+                    │   (makefun/dossier/v1)    │
+                    └─────────────┬─────────────┘
+                                  │
+                                  ▼
+                    /sdcard/Download/token-radar-v2-dossier.json
+```
+
+## Scoring Model (radar-2.1)
 
 ```
 implied = round(
@@ -69,18 +125,35 @@ implied = round(
   × (1 + (liquidity - 0.5) × 0.15 + (holders - 0.5) × 0.15 + (momentum - 0.5) × 0.15)
   × (1 - risk_penalty)
 )
+
+composite_score = round((liquidity_depth + holder_safety + momentum_organic) × 100 / 3)
+risk_tier = LOW (≥63) | MEDIUM (≥50) | HIGH (≥25) | CRITICAL (<25)
 ```
 
-**Factors:**
-- **Base**: TVL × 0.25
-- **Growth**: 7-day TVL change, clamped to [-60%, 120%], weighted 45%
-- **Maturity**: Protocol age (days since listed), floor 55%, caps at 3 years
-- **Liquidity**: Derived from TVL, age, chain count, category (0–1)
-- **Holders**: Derived from TVL, age (0–1)
-- **Momentum**: Derived from 7d growth, TVL (0–1)
-- **Risk penalty**: Young age, low TVL, sharp decline, bridge/CEX category, single-chain concentration — max 30%
+**Factor Weights:**
 
-All scores are deterministic — derived from snapshot fields via hash-based pseudorandom functions. No protocol name is special-cased.
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| **Base Multiple** | 0.25× | TVL in USD × 25% |
+| **Growth** | 0.45× | 7-day TVL change, clamped [-60%, +120%] |
+| **Maturity** | 0.55→1.0 | Protocol age, floor 55%, caps at 3 years (1095 days) |
+| **Liquidity Depth** | 0.15× | TVL tiers + age + chain count + category hash |
+| **Holder Safety** | 0.15× | TVL tiers + age + slug hash (proxy for distribution) |
+| **Momentum Organic** | 0.15× | 7d growth + TVL scale |
+| **Risk Penalty** | max 0.30 | Young age, low TVL, sharp decline, bridge/CEX, single-chain |
+| **Cohort Percentile** | — | Average of liquidity/holder/momentum percentiles (0-100) |
+| **Top10 Holder %** | — | Deterministic proxy: 15-75% based on holder_score + slug hash |
+| **Capital Efficiency** | — | TVL / implied_value ratio (0.1-10×) |
+
+**Pass Thresholds (Calibrated):**
+
+| Tier | Composite | Risk | Action |
+|------|-----------|------|--------|
+| **PASS / LOW** | ≥63 | Low | Farm $100-150, 45-60d hold |
+| **WATCH / MEDIUM** | 50-62 | Medium | Small position $50, monitor |
+| **REJECT / HIGH** | <50 | High/Critical | Avoid |
+
+**Determinism:** All scores derived from snapshot fields via `hashToFloat()` pseudorandom function. No protocol name is special-cased. Identical SHA-256 on repeated runs.
 
 ## Output Files
 
@@ -89,7 +162,7 @@ All scores are deterministic — derived from snapshot fields via hash-based pse
 | `output/board.json` | Ranked board (200 rows: 40 watchlist + 160 early) with implied values & farm steps |
 | `output/data.js` | `window.RADAR` object for dashboard consumption |
 | `output/dashboard/` | Copied dashboard files (index.html, app.css, app.js) |
-| `output/screenshots/` | 3 PNG screenshots (board, detail, filtered) |
+| `output/screenshots/` | 3 PNG screenshots (market overview, risk matrix, deep dive) |
 | `output/dossier.json` | Dossier for make.fun judge (screenshots + source text) |
 
 ## Determinism Verification
@@ -99,8 +172,8 @@ $ node src/cli.ts --input input/snapshot.json --verify
 [cli] Running determinism verification (2 runs)...
 [cli] Run 1...
 [cli] Run 2...
-[cli] Run 1 dossier SHA-256: c0193c3fa2ca3ae43c5e3947286c0fa9db883b253390288dd2be03de3459faf9
-[cli] Run 2 dossier SHA-256: c0193c3fa2ca3ae43c5e3947286c0fa9db883b253390288dd2be03de3459faf9
+[cli] Run 1 dossier SHA-256: 1d8bb9bdfaffd6d11c1d4c61e5ba6b142f196d427f5c290347a5ad27939fdd44
+[cli] Run 2 dossier SHA-256: 1d8bb9bdfaffd6d11c1d4c61e5ba6b142f196d427f5c290347a5ad27939fdd44
 [cli] ✓ Deterministic: SHA-256 match!
 ```
 

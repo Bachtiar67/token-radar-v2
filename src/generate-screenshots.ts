@@ -62,10 +62,24 @@ function fmtAge(days: number | null): string {
 }
 
 function riskTier(score: number): { label: string; color: string; glow: string } {
-  if (score >= 0.75) return { label: 'LOW', color: COLORS.positive, glow: COLORS.accentGlow };
+  if (score >= 0.63) return { label: 'LOW', color: COLORS.positive, glow: COLORS.accentGlow };
   if (score >= 0.5) return { label: 'MEDIUM', color: COLORS.warn, glow: COLORS.warnGlow };
   if (score >= 0.25) return { label: 'HIGH', color: COLORS.danger, glow: COLORS.dangerGlow };
   return { label: 'CRITICAL', color: '#ff0000', glow: 'rgba(255, 0, 0, 0.4)' };
+}
+
+// Draw diagonal hatch pattern for color-blind accessibility
+function drawHatch(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string, spacing = 8) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = -h; i < w + h; i += spacing) {
+    ctx.moveTo(x + i, y);
+    ctx.lineTo(x + i + h, y + h);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -355,6 +369,8 @@ async function generateMarketOverview() {
     ctx.fillStyle = tier.color;
     drawRoundedRect(ctx, 180, ty, Math.max(barWidth, 0), 24, 6);
     ctx.fill();
+    // Add hatch for color-blind accessibility
+    drawHatch(ctx, 180, ty, Math.max(barWidth, 0), 24, 'rgba(0,0,0,0.25)', 6);
     drawText(ctx, String(tier.count) + ' tokens', 600 + barWidth, ty + 12, { font: '13px "IBM Plex Mono"', color: COLORS.textDim, baseline: 'middle' });
   });
 
@@ -454,6 +470,31 @@ async function generateRiskLiquidityMatrix() {
     ctx.fill();
   });
 
+  // PASS threshold line at 63% liquidity
+  const thresholdX = plotX + (63 / maxX) * plotW;
+  ctx.strokeStyle = COLORS.positive;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 4]);
+  ctx.beginPath();
+  ctx.moveTo(thresholdX, plotY);
+  ctx.lineTo(thresholdX, plotY + plotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  drawText(ctx, 'PASS ≥63%', thresholdX + 4, plotY + 16, { font: 'bold 10px "IBM Plex Mono"', color: COLORS.positive });
+
+  // Highlight #1 Gauntlet
+  const gauntlet = scatterData.find(d => d.name.toLowerCase().includes('gauntlet'));
+  if (gauntlet) {
+    const gx = plotX + (gauntlet.x / maxX) * plotW;
+    const gy = plotY + plotH - (gauntlet.y / maxY) * plotH;
+    ctx.strokeStyle = COLORS.accent;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(gx, gy, 10, 0, Math.PI * 2);
+    ctx.stroke();
+    drawText(ctx, '#1 ' + gauntlet.name, gx + 14, gy - 10, { font: 'bold 11px "IBM Plex Mono"', color: COLORS.accent });
+  }
+
   y += 400;
 
   const rightPanelX = 40 + leftPanelW + gap;
@@ -483,6 +524,8 @@ async function generateRiskLiquidityMatrix() {
     ctx.fillStyle = g.color;
     drawRoundedRect(ctx, rightPanelX + 20, gy + 24, barW, 16, 8);
     ctx.fill();
+    // Add hatch for color-blind accessibility
+    drawHatch(ctx, rightPanelX + 20, gy + 24, barW, 16, 'rgba(0,0,0,0.3)', 6);
     drawText(ctx, Math.round(g.score * 100) + '%', rightPanelX + 340, gy + 10, { font: 'bold 12px "IBM Plex Mono"', color: g.color });
   });
 
@@ -539,6 +582,18 @@ async function generateRiskLiquidityMatrix() {
     ctx.arc(px, py, 5, 0, Math.PI * 2);
     ctx.fill();
   });
+
+  // PASS threshold line at 50% momentum
+  const momentumThresholdX = volPlotX + (50 / volMaxX) * volPlotW;
+  ctx.strokeStyle = COLORS.positive;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 4]);
+  ctx.beginPath();
+  ctx.moveTo(momentumThresholdX, volPlotY);
+  ctx.lineTo(momentumThresholdX, volPlotY + volPlotH);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  drawText(ctx, 'PASS ≥50%', momentumThresholdX + 4, volPlotY + 16, { font: 'bold 10px "IBM Plex Mono"', color: COLORS.positive });
 
   ctx.fillStyle = COLORS.panel;
   drawRoundedRect(ctx, rightPanelX, y, rightPanelW, 380, 12);
@@ -658,8 +713,11 @@ async function generateTopCandidatesDeepDive() {
       drawRoundedRect(ctx, cx + 20, barY + 18, 300, 14, 7);
       ctx.fill();
       ctx.fillStyle = s.color;
-      drawRoundedRect(ctx, cx + 20, barY + 18, (s.score / s.max) * 300, 14, 7);
+      const barW = (s.score / s.max) * 300;
+      drawRoundedRect(ctx, cx + 20, barY + 18, barW, 14, 7);
       ctx.fill();
+      // Add hatch for color-blind accessibility
+      drawHatch(ctx, cx + 20, barY + 18, barW, 14, 'rgba(0,0,0,0.3)', 6);
       drawText(ctx, s.score + '%', cx + 340, barY, { font: 'bold 12px "IBM Plex Mono"', color: s.color });
     });
 

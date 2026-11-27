@@ -130,6 +130,73 @@ function loadRadarData() {
   return JSON.parse(match[1]);
 }
 
+// Truncate text to a pixel width, appending an ASCII "..." ellipsis.
+function truncateToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, font: string): string {
+  ctx.font = font;
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  const ell = '...';
+  const ellW = ctx.measureText(ell).width;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(text.slice(0, mid)).width + ellW <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo).replace(/[,\s]+$/, '') + ell;
+}
+
+// Wrap text into lines that fit maxWidth at the given font. Returns lines.
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, font: string): string[] {
+  ctx.font = font;
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const test = line === '' ? w : line + ' ' + w;
+    if (ctx.measureText(test).width <= maxWidth || line === '') {
+      line = test;
+    } else {
+      lines.push(line);
+      line = w;
+    }
+  }
+  if (line !== '') lines.push(line);
+  return lines;
+}
+
+// Enrich radar rows with their structured analysis and rank by composite score.
+interface EnrichedRow {
+  row: any;
+  composite: number;
+  analysis: any;
+}
+
+function rankedRows(radar: any): EnrichedRow[] {
+  const analyses = radar.token_analyses || {};
+  const enriched: EnrichedRow[] = radar.rows.map((row: any) => {
+    const analysis = analyses[row.slug];
+    let composite: number;
+    if (analysis && typeof analysis.composite_score === 'number') {
+      composite = analysis.composite_score;
+    } else {
+      composite = Math.round(((row.liquidity_score || 0) + (row.holder_score || 0) + (row.momentum_score || 0)) * 100 / 3);
+    }
+    return { row, composite, analysis };
+  });
+  enriched.sort((a, b) =>
+    b.composite - a.composite ||
+    (b.row.tvl_usd || 0) - (a.row.tvl_usd || 0) ||
+    (b.row.liquidity_score || 0) - (a.row.liquidity_score || 0) ||
+    (a.row.slug < b.row.slug ? -1 : a.row.slug > b.row.slug ? 1 : 0)
+  );
+  // Assign display ranks by composite order (1 = highest composite score).
+  enriched.forEach((e, i) => {
+    e.row = { ...e.row, rank: i + 1 };
+  });
+  return enriched;
+}
+
 async function generateMarketOverview() {
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
@@ -153,10 +220,17 @@ async function generateMarketOverview() {
     ctx.stroke();
   }
 
-  const topRows = radar.rows.slice(0, 10);
-  const passCount = radar.rows.filter(r => (r.liquidity_score || 0) >= 0.7 && (r.holder_score || 0) >= 0.7 && (r.momentum_score || 0) >= 0.5).length;
-  const watchCount = radar.rows.filter(r => (r.liquidity_score || 0) >= 0.5).length;
-  const rejectCount = radar.rows.length - passCount - watchCount;
+  const topRows = rankedRows(radar).map(e => e.row).slice(0, 10);
+  const analyses = radar.token_analyses || {};
+  const passCount = Math.max(0, radar.rows.filter(r => {
+    const a = analyses[r.slug];
+    return a && typeof a.composite_score === 'number' ? a.composite_score >= 75 : false;
+  }).length);
+  const watchCount = Math.max(0, radar.rows.filter(r => {
+    const a = analyses[r.slug];
+    return a && typeof a.composite_score === 'number' ? a.composite_score >= 50 && a.composite_score < 75 : false;
+  }).length);
+  const rejectCount = Math.max(0, radar.rows.length - passCount - watchCount);
   const medianLiq = radar.rows.map(r => r.liquidity_score || 0).sort((a, b) => a - b)[Math.floor(radar.rows.length / 2)];
 
   let y = 50;
@@ -259,11 +333,15 @@ async function generateMarketOverview() {
 
   drawText(ctx, 'RISK TIER DISTRIBUTION', 60, y + 20, { font: 'bold 14px "IBM Plex Mono"', color: COLORS.text });
 
+  const tierOf = (r: any): string => {
+    const a = analyses[r.slug];
+    return a && typeof a.risk_tier === 'string' ? a.risk_tier : 'CRITICAL';
+  };
   const tiers = [
-    { label: 'LOW', color: COLORS.positive, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.75 && (r.holder_score || 0) >= 0.75).length },
-    { label: 'MEDIUM', color: COLORS.warn, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.5 && (r.liquidity_score || 0) < 0.75).length },
-    { label: 'HIGH', color: COLORS.danger, count: radar.rows.filter(r => (r.liquidity_score || 0) >= 0.25 && (r.liquidity_score || 0) < 0.5).length },
-    { label: 'CRITICAL', color: '#ff0000', count: radar.rows.filter(r => (r.liquidity_score || 0) < 0.25).length },
+    { label: 'LOW', color: COLORS.positive, count: radar.rows.filter(r => tierOf(r) === 'LOW').length },
+    { label: 'MEDIUM', color: COLORS.warn, count: radar.rows.filter(r => tierOf(r) === 'MEDIUM').length },
+    { label: 'HIGH', color: COLORS.danger, count: radar.rows.filter(r => tierOf(r) === 'HIGH').length },
+    { label: 'CRITICAL', color: '#ff0000', count: radar.rows.filter(r => tierOf(r) === 'CRITICAL').length },
   ];
 
   const maxCount = Math.max(...tiers.map(t => t.count));
@@ -477,11 +555,12 @@ async function generateRiskLiquidityMatrix() {
   }));
 
   anomalies.forEach((a, i) => {
-    const ay = y + 50 + i * 40;
-    drawText(ctx, a.name.length > 22 ? a.name.slice(0, 22) + '…' : a.name, rightPanelX + 20, ay + 10, { font: '12px "IBM Plex Mono"', color: COLORS.text });
+    const ay = y + 50 + i * 44;
+    const nameText = truncateToWidth(ctx, a.name, 260, '12px "IBM Plex Mono"');
+    drawText(ctx, nameText, rightPanelX + 20, ay + 10, { font: '12px "IBM Plex Mono"', color: COLORS.text });
     if (a.flags.length > 0) {
       a.flags.slice(0, 2).forEach((f, fi) => {
-        drawText(ctx, '⚠ ' + f, rightPanelX + 20, ay + 26 + fi * 14, { font: '10px "IBM Plex Mono"', color: COLORS.warn });
+        drawText(ctx, '- ' + f, rightPanelX + 20, ay + 24 + fi * 14, { font: '10px "IBM Plex Mono"', color: COLORS.warn });
       });
     }
     const tier = riskTier(0.25);
@@ -517,7 +596,7 @@ async function generateTopCandidatesDeepDive() {
     ctx.stroke();
   }
 
-  const top3 = radar.rows.slice(0, 3);
+  const top3 = rankedRows(radar).map(e => e.row).slice(0, 3);
 
   let y = 50;
   drawGlowText(ctx, 'TOKEN RADAR v2 — TOP CANDIDATES DEEP DIVE', 60, y, {
@@ -557,7 +636,8 @@ async function generateTopCandidatesDeepDive() {
       color: tier.color,
       glowColor: tier.glow
     });
-    drawText(ctx, 'Chains: ' + row.chains.join(', '), cx + 20, cy + 50, { font: '11px "IBM Plex Mono"', color: COLORS.textDim });
+    const chainsText = truncateToWidth(ctx, 'Chains: ' + row.chains.join(', '), cardW - 40, '11px "IBM Plex Mono"');
+    drawText(ctx, chainsText, cx + 20, cy + 50, { font: '11px "IBM Plex Mono"', color: COLORS.textDim });
     drawText(ctx, 'TVL: ' + fmtUsd(row.tvl_usd) + '  |  7D: ' + (row.change_7d === null ? 'n/a' : fmtPct(row.change_7d)) + '  |  Age: ' + fmtAge(row.age_days), cx + 20, cy + 70, { font: '11px "IBM Plex Mono"', color: COLORS.textDim });
 
     drawText(ctx, 'COMPOSITE SCORE: ' + composite + '/100', cx + 20, cy + 110, { font: 'bold 14px "IBM Plex Mono"', color: tier.color });
@@ -594,7 +674,7 @@ async function generateTopCandidatesDeepDive() {
     ].filter(Boolean).slice(0, 3);
 
     bullish.forEach((b, bi) => {
-      drawText(ctx, '▸ ' + b, cx + 20, sy + 22 + bi * 18, { font: '11px "IBM Plex Mono"', color: COLORS.positive });
+      drawText(ctx, '- ' + b, cx + 20, sy + 22 + bi * 18, { font: '11px "IBM Plex Mono"', color: COLORS.positive });
     });
 
     sy += 90;
@@ -610,7 +690,7 @@ async function generateTopCandidatesDeepDive() {
     if (redFlags.length === 0) redFlags.push('No significant red flags detected');
 
     redFlags.forEach((r, ri) => {
-      drawText(ctx, '▸ ' + r, cx + 20, sy + 22 + ri * 18, { font: '11px "IBM Plex Mono"', color: COLORS.danger });
+      drawText(ctx, '- ' + r, cx + 20, sy + 22 + ri * 18, { font: '11px "IBM Plex Mono"', color: COLORS.danger });
     });
 
     sy += 90;
@@ -621,7 +701,10 @@ async function generateTopCandidatesDeepDive() {
     else if (composite >= 40) verdict = 'CAUTION — Mixed signals. Small position only, monitor closely.';
     else verdict = 'AVOID — Significant risks outweigh potential rewards.';
 
-    drawText(ctx, verdict, cx + 20, sy + 22, { font: '12px "IBM Plex Mono"', color: tier.color, maxWidth: cardW - 40 });
+    const verdictLines = wrapText(ctx, verdict, cardW - 40, '12px "IBM Plex Mono"');
+    verdictLines.forEach((vl, vi) => {
+      drawText(ctx, vl, cx + 20, sy + 22 + vi * 16, { font: '12px "IBM Plex Mono"', color: tier.color });
+    });
   });
 
   const outputPath = join(screenshotsDir, '03-top-candidates-deep-dive.png');

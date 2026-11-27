@@ -125,6 +125,14 @@ async function main() {
     if (existsSync(tempDir1)) rm(tempDir1, { recursive: true });
     if (existsSync(tempDir2)) rm(tempDir2, { recursive: true });
 
+    // Generate screenshots once into root screenshots/ so both verify runs
+    // can copy them (main.ts requires screenshots/ to exist at the project root).
+    console.log('[cli] Generating screenshots for verification...');
+    if (!generateScreenshots()) {
+      console.error('[cli] Screenshot generation failed');
+      process.exit(1);
+    }
+
     console.log('[cli] Run 1...');
     if (!runMain(inputPath, tempDir1)) {
       console.error('[cli] Run 1 failed');

@@ -238,11 +238,11 @@ async function generateMarketOverview() {
   const analyses = radar.token_analyses || {};
   const passCount = Math.max(0, radar.rows.filter(r => {
     const a = analyses[r.slug];
-    return a && typeof a.composite_score === 'number' ? a.composite_score >= 75 : false;
+    return a && typeof a.composite_score === 'number' ? a.composite_score >= 63 : false;
   }).length);
   const watchCount = Math.max(0, radar.rows.filter(r => {
     const a = analyses[r.slug];
-    return a && typeof a.composite_score === 'number' ? a.composite_score >= 50 && a.composite_score < 75 : false;
+    return a && typeof a.composite_score === 'number' ? a.composite_score >= 50 && a.composite_score < 63 : false;
   }).length);
   const rejectCount = Math.max(0, radar.rows.length - passCount - watchCount);
   const medianLiq = radar.rows.map(r => r.liquidity_score || 0).sort((a, b) => a - b)[Math.floor(radar.rows.length / 2)];
@@ -337,7 +337,7 @@ async function generateMarketOverview() {
     drawText(ctx, fmtUsd(row.implied_value_usd), 1220, ry + 14, { font: 'bold 13px "IBM Plex Mono"', color: COLORS.accent, baseline: 'middle' });
   });
 
-  y += 500;
+  y += 380;
 
   ctx.fillStyle = COLORS.panel;
   drawRoundedRect(ctx, 40, y, WIDTH - 80, 220, 12);

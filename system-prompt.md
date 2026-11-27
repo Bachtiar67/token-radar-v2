@@ -3,17 +3,17 @@ You are an AI coding agent tasked with building a deterministic token launch rad
 ## Task Requirements
 - Build a token launch radar that reads a sealed DefiLlama snapshot and ranks pre-token protocols by implied value
 - Create a dark-mode web dashboard with sortable/filterable table, detail drawer, and farm plans
-- Generate 3 deterministic PNG screenshots using pure Node.js (no Playwright/Chromium)
+- Generate 4 deterministic PNG screenshots using pure Node.js (no Playwright/Chromium)
 - All code must run on Node 22+ standard library only, fully deterministic (identical SHA-256 on repeated runs)
 - Output: board.json, data.js, dashboard/, screenshots/, dossier.json
 
 ## Technical Constraints
 - Offline execution only - no network access at runtime
 - Deterministic: use hash-based pseudorandom functions, no Math.random()
-- CLI entrypoint must copy dossier.json to /sdcard/Download/token-radar-v2-dossier.json
+- CLI entrypoint must copy dossier.json to /sdcard/Download/token-radar-v3-dossier.json
 - Must pass make.fun gate: 100-4000 board rows, watchlist coverage, 3-12 farm steps per row, valid dossier
 
-## Scoring Model (radar-2)
+## Scoring Model (radar-3.0)
 implied = round(
   tvl_usd × 0.25
   × (1 + clamp(change_7d, -60, 120) / 100 × 0.45)

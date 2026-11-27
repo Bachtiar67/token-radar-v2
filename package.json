@@ -1,7 +1,7 @@
 {
   "name": "token-radar-v2",
-  "version": "2.0.0",
-  "description": "Token Launch Radar v2 - Multi-factor scoring with deterministic offline execution",
+  "version": "3.0.0",
+  "description": "Token Launch Radar v3 - Multi-factor scoring with deterministic offline execution",
   "main": "src/main.ts",
   "scripts": {
     "build": "node src/main.ts --input /input/snapshot.json --output output",

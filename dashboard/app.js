@@ -1,4 +1,4 @@
-// Token Radar v2 - Dark Mode Dashboard
+// Token Radar v3 - Dark Mode Dashboard
 // Reads window.RADAR from data.js, renders ranked board with filter/sort/detail
 
 (function () {
@@ -180,7 +180,7 @@
 
   function header() {
     return el('header', { class: 'top' },
-      el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar v2' })),
+      el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar v3' })),
       el('div', { class: 'top-meta' },
         el('span', { text: 'Snapshot ' + DATA.as_of }),
         el('span', { text: 'DefiLlama protocol index' }),
@@ -325,7 +325,7 @@
   function modelPanel() {
     var m = DATA.model;
     return el('section', { class: 'panel model' },
-      el('h2', { text: 'How implied value is computed (radar-2)' }),
+      el('h2', { text: 'How implied value is computed (radar-3.0)' }),
       el('p', { class: 'sub', text: 'Every row is scored by one deterministic function of the snapshot figures. No protocol name is special-cased. Factors: TVL, 7d growth, age, liquidity depth, holder distribution, momentum, risk flags.' }),
       el('div', { class: 'formula' },
         'implied = round( tvl_usd x ' + m.base_multiple +

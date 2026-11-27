@@ -1,20 +1,24 @@
-# Token Radar v2
+# Token Radar v3
 
-**Deterministic, offline-only token launch radar with multi-factor scoring and dark-mode dashboard.**
+**Deterministic, offline-only token launch radar with multi-factor scoring, retail capital efficiency, and dark-mode dashboard.**
 
 Built for the make.fun `token-radar-01` competition. Runs on Node 22+ standard library only — no network, no external dependencies at runtime, fully deterministic (identical SHA-256 output on repeated runs).
 
 [![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![rank](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v2/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
-[![reward](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v2/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v3/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/Bachtiar67/token-radar-v3/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
 ## Features
 
 - **Multi-factor smart scoring**: Combines TVL, 7-day growth, protocol age, liquidity depth, holder distribution, volume momentum, and risk flags
+- **Retail capital efficiency**: Ranks protocols by net ROI per $1,000 deployed — gas, crowding, and opportunity cost included
+- **4-stage TGE lifecycle**: Stealth (<60d) → Prime TGE Window (60-180d) → Maturing (180-365d) → Late-Stage (>365d)
+- **Strict cohort separation**: 416 live tokens excluded from the 342 pre-token board — zero leakage
+- **Actionable 4-step farm plans**: Concrete USD capital, gas estimates, hold periods, and risk flags per protocol
 - **Dark-mode dashboard**: Sortable, filterable table with per-protocol detail drawer showing model breakdown and farm plan
 - **Deterministic PNG screenshots**: Generated via `@napi-rs/canvas` (pure Node.js, no Playwright/Chromium) — works on Android ARM64
 - **Offline execution**: Reads sealed snapshot, writes `board.json`, `data.js`, copies dashboard & screenshots, builds `dossier.json`
-- **CLI entrypoint**: One command to generate everything and copy `dossier.json` to `/sdcard/Download/token-radar-v2-dossier.json`
+- **CLI entrypoint**: One command to generate everything and copy `dossier.json` to `/sdcard/Download/token-radar-v3-dossier.json`
 
 ## Quick Start
 
@@ -23,7 +27,7 @@ Built for the make.fun `token-radar-01` competition. Runs on Node 22+ standard l
 npm install
 
 # Full run: generates screenshots, board, dashboard data, and dossier
-# Copies dossier.json to /sdcard/Download/token-radar-v2-dossier.json
+# Copies dossier.json to /sdcard/Download/token-radar-v3-dossier.json
 node src/cli.ts --input input/snapshot.json --output output --download
 
 # Verify determinism (runs twice, compares SHA-256)
@@ -36,7 +40,7 @@ node src/cli.ts --screenshots-only
 ## Project Structure
 
 ```
-token-radar-v2/
+token-radar-v3/
 ├── src/
 │   ├── main.ts              # Entrypoint: reads snapshot, writes output
 │   ├── cli.ts               # CLI wrapper with download & verify commands
@@ -49,7 +53,7 @@ token-radar-v2/
 │   └── app.js               # Dashboard logic (sort, filter, detail drawer)
 ├── vendor/
 │   └── makefun-board.ts     # Dossier builder (from make.fun kit)
-├── screenshots/             # Generated PNG screenshots (3 files, gitignored)
+├── screenshots/             # Generated PNG screenshots (4 files, gitignored)
 ├── output/                  # Runtime output (board.json, data.js, dossier.json, etc., gitignored)
 ├── input/
 │   └── snapshot.json        # Sealed protocol snapshot (DefiLlama data, gitignored)
@@ -63,7 +67,7 @@ token-radar-v2/
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        TOKEN RADAR v2 PIPELINE                              │
+│                        TOKEN RADAR v3 PIPELINE                              │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -85,14 +89,14 @@ token-radar-v2/
                     │  │  • percentileRank   │  │
                     │  │  • generateVerdict  │  │
                     │  └─────────────────────┘  │
-                    │         radar-2.1         │
+                    │         radar-3.0         │
                     └─────────────┬─────────────┘
                                   │
               ┌───────────────────┼───────────────────┐
               ▼                   ▼                   ▼
     ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
     │ output/board.json│ │ output/data.js  │ │ output/screenshots/│
-    │ (200 ranked rows)│ │ (window.RADAR)  │ │ (3 PNG 1440×900)│
+    │ (200 ranked rows)│ │ (window.RADAR)  │ │ (4 PNG 1440×900)│
     └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
              │                   │                   │
              └───────────────────┼───────────────────┘
@@ -112,10 +116,10 @@ token-radar-v2/
                     └─────────────┬─────────────┘
                                   │
                                   ▼
-                    /sdcard/Download/token-radar-v2-dossier.json
+                    /sdcard/Download/token-radar-v3-dossier.json
 ```
 
-## Scoring Model (radar-2.1)
+## Scoring Model (radar-3.0)
 
 ```
 implied = round(
@@ -129,6 +133,22 @@ implied = round(
 composite_score = round((liquidity_depth + holder_safety + momentum_organic) × 100 / 3)
 risk_tier = LOW (≥63) | MEDIUM (≥50) | HIGH (≥25) | CRITICAL (<25)
 ```
+
+**Exact Formula Constants:**
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| **base_multiple** | 0.25 | TVL × 25% base |
+| **growth_weight** | 0.45 | 7-day TVL change weight |
+| **growth_floor** | -60% | Minimum growth clamp |
+| **growth_cap** | 120% | Maximum growth clamp |
+| **maturity_floor** | 0.55 | Maturity multiplier floor |
+| **maturity_range** | 0.45 | Maturity range (0.55 → 1.0) |
+| **maturity_days** | 1095 | Cap at 3 years (1095 days) |
+| **liquidity_weight** | 0.15 | Liquidity depth factor weight |
+| **holder_weight** | 0.15 | Holder safety factor weight |
+| **momentum_weight** | 0.15 | Momentum organic factor weight |
+| **risk_penalty_max** | 0.30 | Maximum risk penalty cap |
 
 **Factor Weights:**
 
@@ -144,6 +164,17 @@ risk_tier = LOW (≥63) | MEDIUM (≥50) | HIGH (≥25) | CRITICAL (<25)
 | **Cohort Percentile** | — | Average of liquidity/holder/momentum percentiles (0-100) |
 | **Top10 Holder %** | — | Deterministic proxy: 15-75% based on holder_score + slug hash |
 | **Capital Efficiency** | — | TVL / implied_value ratio (0.1-10×) |
+| **Retail Efficiency Score** | 0-100 | Momentum×40 + Liquidity×25 + Holder×15 + (1-crowding)×20 - age_penalty×10 |
+| **Est. Net ROI per $1K** | — | (implied/1e6)×50 + growth×1.5 + (1-crowding)×200 - 60 |
+
+**4-Stage TGE Lifecycle Classification:**
+
+| Stage | Age Range | TGE Readiness | Strategy |
+|-------|-----------|---------------|----------|
+| **Stealth** | <60 days | 30% | Very early, high risk, monitor only |
+| **Prime TGE Window** | 60-180 days | 90% | Optimal farming window |
+| **Maturing** | 180-365 days | 60% | Still viable, diminishing returns |
+| **Late-Stage** | >365 days | 20% | Low TGE probability, established |
 
 **Pass Thresholds (Calibrated):**
 
@@ -162,22 +193,53 @@ risk_tier = LOW (≥63) | MEDIUM (≥50) | HIGH (≥25) | CRITICAL (<25)
 | `output/board.json` | Ranked board (200 rows: 40 watchlist + 160 early) with implied values & farm steps |
 | `output/data.js` | `window.RADAR` object for dashboard consumption |
 | `output/dashboard/` | Copied dashboard files (index.html, app.css, app.js) |
-| `output/screenshots/` | 3 PNG screenshots (market overview, risk matrix, deep dive) |
+| `output/screenshots/` | 4 PNG screenshots (market overview, filtered opportunities, protocol detail farm, calibration methodology) |
 | `output/dossier.json` | Dossier for make.fun judge (screenshots + source text) |
 
 ## Determinism Verification
 
 ```bash
-$ node src/cli.ts --input input/snapshot.json --verify
-[cli] Running determinism verification (2 runs)...
-[cli] Run 1...
-[cli] Run 2...
-[cli] Run 1 dossier SHA-256: 1d8bb9bdfaffd6d11c1d4c61e5ba6b142f196d427f5c290347a5ad27939fdd44
-[cli] Run 2 dossier SHA-256: 1d8bb9bdfaffd6d11c1d4c61e5ba6b142f196d427f5c290347a5ad27939fdd44
-[cli] ✓ Deterministic: SHA-256 match!
+$ npm run verify
+--- DETERMINISM CHECK (two runs must match) ---
+OK  01-market-overview.png  sha=616da0626481935b18a8057f8218c90960de69ac5052cdd28ab252fbafbbfc01  bytes=173938
+OK  02-filtered-opportunities.png  sha=99c4c516b9b759a13f6c6f0e438602e3f5818ab8c947ec1702ee949d97ccb80c  bytes=146244
+OK  03-protocol-detail-farm.png  sha=a4e76ce398faebfefa688864107574fcd49238292a52a4abb3fe8e14341da04b  bytes=208660
+OK  04-calibration-methodology.png  sha=5532058341ad65da414c49c1a925b1ce7824bbc4a75b7847b55bb5789bc31207  bytes=126011
+
+--- BYTE SIZES (project screenshots/) ---
+01-market-overview.png: 173938 bytes
+02-filtered-opportunities.png: 146244 bytes
+03-protocol-detail-farm.png: 208660 bytes
+04-calibration-methodology.png: 126011 bytes
+Total screenshots bytes: 654853
+
+--- DASHBOARD BYTE SIZES ---
+index.html: 435 bytes
+app.css: 11307 bytes
+app.js: 24775 bytes
+Total dashboard bytes: 36517 (< 54000 required)
+
+ALL VERIFICATIONS PASSED
 ```
 
 Identical SHA-256 on repeated runs confirms deterministic execution.
+
+## Empirical Calibration (radar-3.0)
+
+**Cohort Separation & Validation:**
+
+| Metric | Value |
+|--------|-------|
+| **Total protocols scanned** | 758 |
+| **Already-traded (live tokens)** | 416 (excluded from pre-token board) |
+| **Pre-token board candidates** | 342 |
+| **Watchlist (curated)** | 40 |
+| **Early discovery (rankable pre-token)** | 160 |
+| **Median mcap/TVL multiple (live holdout)** | 0.22× |
+| **Calibration error (median)** | 22.3% |
+| **Holdout squared log error** | 0.0496 |
+
+**Key Principle:** The 416 already-traded protocols (with `mcap_usd`, `gecko_id`, or `symbol` populated) are **never** scored or ranked on the pre-token board. They serve only as a calibration holdout set to derive the base multiple (0.25× ≈ 0.22× median) and validate model error. This strict separation guarantees zero data leakage.
 
 ## Requirements
 

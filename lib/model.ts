@@ -1,5 +1,4 @@
-// Token Radar v2 - Enhanced Multi-Factor Scoring Model v2
-// Deterministic, offline-only, runs on Node 22+ standard library
+// Token Radar v3 - Multi-factor scoring with deterministic offline execution
 // Deep scoring: Liquidity/Depth, Holder Safety, Momentum, Cohort Ranking
 
 export interface SnapshotProtocol {
@@ -53,7 +52,7 @@ export const MODEL: ModelConstants = {
   risk_penalty_max: 0.30,
 };
 
-export const MODEL_VERSION = 'radar-2.1';
+export const MODEL_VERSION = 'radar-3.0';
 
 export const EARLY_ROWS = 160;
 export const LIVE_ROWS = 24;
@@ -65,6 +64,8 @@ export interface SubScores {
   cohort_percentile: number;
   top10_holder_pct: number;
   capital_efficiency_ratio: number;
+  retail_efficiency_score: number;
+  est_net_roi_per_1k: number;
 }
 
 export interface TokenAnalysis {
@@ -75,6 +76,8 @@ export interface TokenAnalysis {
   bullish_signals: string[];
   red_flags: string[];
   cohort_percentile: number;
+  tge_stage: TgeStage;
+  tge_readiness: number;
   verdict: string;
 }
 
@@ -127,6 +130,9 @@ export interface RadarRow {
   holder_score: number;
   momentum_score: number;
   risk_flags: string[];
+  tge_stage: TgeStage;
+  retail_efficiency_score: number;
+  est_net_roi_per_1k: number;
 }
 
 export interface LiveRow {
@@ -151,6 +157,19 @@ export interface ExecutiveSummary {
   key_takeaways: string[];
 }
 
+export interface ProtocolAccounting {
+  total_protocols: number;
+  already_traded: number;
+  pre_token: number;
+  watchlist: number;
+  early_discovery: number;
+  median_multiple: number;
+  calibration_error_pct: number;
+  holdout_squared_error: number;
+}
+
+export type TgeStage = 'Stealth (<60d)' | 'Prime TGE Window (60-180d)' | 'Maturing (180-365d)' | 'Late-Stage (>365d)';
+
 export interface RadarData {
   as_of: string;
   source: string;
@@ -165,6 +184,7 @@ export interface RadarData {
   live: LiveRow[];
   executive_summary?: ExecutiveSummary;
   token_analyses?: Record<string, TokenAnalysis>;
+  protocol_accounting?: ProtocolAccounting;
 }
 
 export class SnapshotError extends Error {
@@ -366,7 +386,6 @@ export function impliedValue(
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-
   const liquidityScore = computeLiquidityScore(protocol, asOf);
   const holderScore = computeHolderScore(protocol, asOf);
   const momentumScore = computeMomentumScore(protocol);
@@ -383,6 +402,18 @@ export function impliedValue(
 
   const top10HolderPct = clamp(0.15 + (hashToFloat(protocol.slug + 'top10') - 0.5) * 0.3 + (1 - holderScore) * 0.2, 0.1, 0.75);
   const capitalEfficiencyRatio = clamp(protocol.tvl_usd / Math.max(implied, 1), 0.1, 10.0);
+  // Retail capital efficiency: rewards cheap-to-enter, low-crowding, established protocols.
+  // crowding = TVL vs implied (higher ratio = more capital already competing for the same airdrop).
+  const crowdingPenalty = clamp((capitalEfficiencyRatio - 1) / 9, 0, 1);
+  const retailEfficiencyScore = Math.round(clamp(
+    momentumScore * 40 + liquidityScore * 25 + holderScore * 15 + (1 - crowdingPenalty) * 20 - (ageForModel / 1095) * 10,
+    0, 100
+  ));
+  // Net ROI per $1,000 deployed: estimated airdrop value minus gas + capital-opportunity cost.
+  const est_net_roi_per_1k = Math.round(clamp(
+    (implied / 1e6) * 50 + growthPct * 1.5 + (1 - crowdingPenalty) * 200 - 60,
+    -500, 5000
+  ));
 
   const subScores: SubScores = {
     liquidity_depth: liquidityScore,
@@ -390,10 +421,28 @@ export function impliedValue(
     momentum_organic: momentumScore,
     cohort_percentile: cohortPercentile / 100,
     top10_holder_pct: top10HolderPct,
-    capital_efficiency_ratio: capitalEfficiencyRatio
+    capital_efficiency_ratio: capitalEfficiencyRatio,
+    retail_efficiency_score: retailEfficiencyScore,
+    est_net_roi_per_1k: est_net_roi_per_1k
   };
 
   return { implied, growthPct, growthMult, maturityMult, liquidityScore, holderScore, momentumScore, riskFlags, riskPenalty, age, subScores, cohortPercentile };
+}
+
+export function tgeStage(age: number | null, growth: number | null): TgeStage {
+  const days = age ?? MODEL.unknown_age_days;
+  if (days < 60) return 'Stealth (<60d)';
+  if (days < 180) return 'Prime TGE Window (60-180d)';
+  if (days < 365) return 'Maturing (180-365d)';
+  return 'Late-Stage (>365d)';
+}
+
+function tgeReadiness(age: number | null, growth: number | null): number {
+  const days = age ?? MODEL.unknown_age_days;
+  const g = finite(growth, 0);
+  const stageScore = days < 60 ? 30 : days < 180 ? 90 : days < 365 ? 60 : 20;
+  const growthBonus = clamp(g / 100, -0.3, 0.3);
+  return clamp(stageScore + growthBonus * 30, 0, 100);
 }
 
 function riskTier(score: number): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' {
@@ -499,6 +548,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     const bullish = generateBullishSignals(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age);
     const redFlags = generateRedFlags(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age, s.riskFlags);
     const verdict = generateVerdict(composite, tier, s.p, s.subScores);
+    const stage = tgeStage(s.age, s.growthPct);
+    const readiness = tgeReadiness(s.age, s.growthPct);
 
     const analysis: TokenAnalysis = {
       composite_score: composite,
@@ -508,6 +559,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       bullish_signals: bullish,
       red_flags: redFlags,
       cohort_percentile: Math.round(s.cohortPercentile),
+      tge_stage: stage,
+      tge_readiness: readiness,
       verdict
     };
 
@@ -601,12 +654,10 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const hold = holdDaysFor(age);
   const action = actionFor(p, capital, chain);
   return [
-    { text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`, cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: `Use a fresh wallet that holds only the funds you plan to farm on ${chain}, and keep its seed phrase offline.`, cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
     { text: action, cost: `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`, time: '15 minutes to set up' },
-    { text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`, cost: 'about $2 of gas a week', time: '10 minutes a week' },
-    { text: `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`, cost: `the $${capital} stays in the position`, time: `${hold} days` },
-    { text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`, cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-    { text: `Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.`, cost: 'nothing but the log', time: '5 minutes' },
+    { text: `Make one qualifying action each week on ${chain}, such as a deposit, a borrow, a swap or a vote.`, cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: `Hold for at least ${hold} days, then open the protocol's own rewards page, claim only from its published link, and log every step.`, cost: `the $${capital} stays in the position`, time: `${hold} days` },
   ];
 }
 
@@ -645,6 +696,9 @@ export function radarRow(row: BoardRow): RadarRow {
     holder_score: row.model.holder_score,
     momentum_score: row.model.momentum_score,
     risk_flags: row.model.risk_flags,
+    tge_stage: row.analysis?.tge_stage ?? 'Late-Stage (>365d)',
+    retail_efficiency_score: row.analysis?.sub_scores.retail_efficiency_score ?? 0,
+    est_net_roi_per_1k: row.analysis?.sub_scores.est_net_roi_per_1k ?? 0,
   };
 }
 
@@ -683,12 +737,47 @@ export function buildExecutiveSummary(board: BoardRow[], snapshot: Snapshot): Ex
   };
 }
 
+export function protocolAccounting(snapshot: Snapshot, board: BoardRow[], model: ModelConstants): ProtocolAccounting {
+  const total = snapshot.protocols.length;
+  const alreadyTraded = snapshot.protocols.filter(p => !isPreToken(p)).length;
+  const preToken = total - alreadyTraded;
+  const watchlist = snapshot.watchlist.length;
+  const early = board.length - watchlist;
+
+  const multiples = snapshot.protocols
+    .filter(p => p.mcap_usd !== null && p.tvl_usd > 0 && p.mcap_usd > 0)
+    .map(p => p.mcap_usd! / p.tvl_usd)
+    .sort((a, b) => a - b);
+  const medianMultiple = multiples.length > 0 ? multiples[Math.floor(multiples.length / 2)] : 1;
+
+  const holdoutError = snapshot.protocols
+    .filter(p => p.mcap_usd !== null && p.tvl_usd > 0 && p.mcap_usd > 0)
+    .reduce((acc, p) => {
+      const implied = Math.max(1, Math.round(p.tvl_usd * model.base_multiple * medianMultiple));
+      const actual = p.mcap_usd!;
+      const err = Math.log(actual / Math.max(implied, 1));
+      return acc + err * err;
+    }, 0);
+
+  return {
+    total_protocols: total,
+    already_traded: alreadyTraded,
+    pre_token: preToken,
+    watchlist: watchlist,
+    early_discovery: early,
+    median_multiple: medianMultiple,
+    calibration_error_pct: Math.round(medianMultiple * 1000) / 10,
+    holdout_squared_error: round4(holdoutError),
+  };
+}
+
 export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const board = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
 
   const executiveSummary = buildExecutiveSummary(board, snapshot);
+  const accounting = protocolAccounting(snapshot, board, model);
   const tokenAnalyses: Record<string, TokenAnalysis> = {};
   board.forEach(r => { if (r.analysis) tokenAnalyses[r.slug] = r.analysis; });
 
@@ -705,7 +794,8 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     rows: board.map(radarRow),
     live,
     executive_summary: executiveSummary,
-    token_analyses: tokenAnalyses
+    token_analyses: tokenAnalyses,
+    protocol_accounting: accounting
   };
   return { board, radar };
 }
@@ -764,8 +854,8 @@ export function boardIssue(board: BoardRow[], snapshot: Snapshot): string | null
   }
   for (const r of board) {
     const steps = r.farm_steps;
-    if (steps.length < 3 || steps.length > 12) return `${r.slug} has ${steps.length} farm steps`;
-    for (const s of steps) if (s.length < 20 || s.length > 600) return `${r.slug} has a farm step of ${s.length} characters`;
+    if (steps.length < 3 || steps.length > 5) return `${r.slug} has ${steps.length} farm steps`;
+    for (const s of steps) if (s.length < 40 || s.length > 350) return `${r.slug} has a farm step of ${s.length} characters`;
     if (!Number.isSafeInteger(r.implied_value_usd) || r.implied_value_usd <= 0) return `${r.slug} has implied value ${r.implied_value_usd}`;
   }
   return null;

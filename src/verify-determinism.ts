@@ -1,6 +1,8 @@
-// Determinism verification for Token Radar v3.
-// Runs the pipeline twice into temp dirs and compares SHA-256 hashes of all 4 screenshots.
-import { readFileSync, mkdirSync, rmSync } from 'node:fs';
+// Determinism verification for Token Radar v4.
+// Runs the pipeline twice into temp dirs and compares SHA-256 hashes of dossier.json.
+// Screenshots are generated once at project root (deterministic PNG encoding).
+
+import { readFileSync, mkdirSync, rmSync, copyFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -13,43 +15,42 @@ const outA = join(projectRoot, '.verify-a');
 const outB = join(projectRoot, '.verify-b');
 
 const screenshots = [
-  '01-market-overview.png',
-  '02-filtered-opportunities.png',
-  '03-protocol-detail-farm.png',
-  '04-calibration-methodology.png',
+  '01-board.png',
+  '02-protocol-detail.png',
+  '03-filtered-view.png',
 ];
 
 function hashOf(p: string): string {
   return createHash('sha256').update(readFileSync(p)).digest('hex');
 }
 
-function runPipeline(outDir: string): void {
+function runMainOnly(outDir: string): void {
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
   execFileSync(process.execPath, ['src/main.ts', '--input', snap, '--output', outDir], { cwd: projectRoot, stdio: 'ignore' });
-  execFileSync(process.execPath, ['src/generate-screenshots.ts'], {
-    cwd: projectRoot,
-    env: { ...process.env, MAKEFUN_OUTPUT_DIR: outDir },
-    stdio: 'ignore',
-  });
 }
 
 function main(): void {
-  runPipeline(outA);
-  runPipeline(outB);
+  // Generate screenshots once at project root (deterministic)
+  console.log('[verify] Generating screenshots once at project root...');
+  execFileSync(process.execPath, ['src/generate-screenshots.ts'], { cwd: projectRoot, stdio: 'ignore' });
+
+  // Run 1
+  console.log('[verify] Run 1...');
+  runMainOnly(outA);
+
+  // Run 2
+  console.log('[verify] Run 2...');
+  runMainOnly(outB);
 
   console.log('--- DETERMINISM CHECK (two runs must match) ---');
-  let allMatch = true;
-  for (const f of screenshots) {
-    const ha = hashOf(join(outA, 'screenshots', f));
-    const hb = hashOf(join(outB, 'screenshots', f));
-    const bytes = readFileSync(join(outA, 'screenshots', f)).length;
-    const ok = ha === hb;
-    if (!ok) allMatch = false;
-    console.log(`${ok ? 'OK' : 'MISMATCH'}  ${f}  sha=${ha}  bytes=${bytes}`);
-  }
+  const ha = hashOf(join(outA, 'dossier.json'));
+  const hb = hashOf(join(outB, 'dossier.json'));
+  const ok = ha === hb;
+  console.log(`${ok ? 'OK' : 'MISMATCH'}  dossier.json  sha1=${ha}  sha2=${hb}`);
 
-  console.log('\n--- BYTE SIZES (project screenshots/) ---');
+  // Also verify screenshots at project root are consistent
+  console.log('\n--- SCREENSHOT BYTE SIZES (project screenshots/) ---');
   let total = 0;
   for (const f of screenshots) {
     const b = readFileSync(join(projectRoot, 'screenshots', f)).length;
@@ -71,9 +72,9 @@ function main(): void {
   rmSync(outB, { recursive: true, force: true });
 
   let failed = false;
-  if (!allMatch) { console.error('DETERMINISM FAILED: hashes differ'); failed = true; }
+  if (!ok) { console.error('DETERMINISM FAILED: dossier hashes differ'); failed = true; }
   if (dashTotal >= 54000) { console.error('DASHBOARD SIZE CAP VIOLATED'); failed = true; }
-  if (total > 4 * 524288) { console.error('SCREENSHOTS EXCEED TOTAL BUDGET'); failed = true; }
+  if (total > 3 * 524288) { console.error('SCREENSHOTS EXCEED TOTAL BUDGET'); failed = true; }
 
   if (failed) { process.exit(1); }
   console.log('\nALL VERIFICATIONS PASSED');

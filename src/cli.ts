@@ -1,4 +1,4 @@
-// Token Radar v3 - CLI Entrypoint
+// Token Radar v4 - CLI Entrypoint
 // Runs the radar, generates output, and copies dossier to Download folder
 
 import { spawnSync } from 'node:child_process';
@@ -10,7 +10,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const projectRoot = join(here, '..');
 
 function runMain(inputPath: string, outputDir: string): boolean {
-  console.log(`[cli] Running token-radar-v3 with input: ${inputPath}, output: ${outputDir}`);
+  console.log(`[cli] Running token-radar-v4 with input: ${inputPath}, output: ${outputDir}`);
 
   const result = spawnSync('node', [
     join(projectRoot, 'src/main.ts'),
@@ -50,7 +50,7 @@ function generateScreenshots(): boolean {
 function copyDossierToDownload(outputDir: string): boolean {
   const sourcePath = join(outputDir, 'dossier.json');
   const downloadDir = '/sdcard/Download';
-  const destPath = join(downloadDir, 'token-radar-v3-dossier.json');
+  const destPath = join(downloadDir, 'token-radar-v4-dossier.json');
 
   if (!existsSync(sourcePath)) {
     console.error(`[cli] Source dossier not found: ${sourcePath}`);
@@ -72,23 +72,23 @@ function copyDossierToDownload(outputDir: string): boolean {
 
 function printUsage() {
   console.log(`
-Token Radar v3 - CLI
+Token Radar v4 - CLI
 
 Usage:
-  token-radar-v3 [options]
+  token-radar-v4 [options]
 
 Options:
   --input <path>       Path to snapshot.json or directory containing it (default: /input/snapshot.json)
   --output <path>      Output directory (default: ./output)
-  --download           Copy dossier.json to /sdcard/Download/token-radar-v3-dossier.json
+  --download           Copy dossier.json to /sdcard/Download/token-radar-v4-dossier.json
   --screenshots-only   Only generate screenshots (requires existing output/data.js)
   --verify             Run twice and verify deterministic output (SHA-256 match)
   --help               Show this help
 
 Examples:
-  token-radar-v3 --input input/snapshot.json --output output --download
-  token-radar-v3 --verify
-  token-radar-v3 --screenshots-only
+  token-radar-v4 --input input/snapshot.json --output output --download
+  token-radar-v4 --verify
+  token-radar-v4 --screenshots-only
 `);
 }
 
@@ -192,7 +192,7 @@ async function main() {
     }
   }
 
-  console.log('[cli] Token Radar v3 completed successfully!');
+  console.log('[cli] Token Radar v4 completed successfully!');
 }
 
 main().catch(err => {

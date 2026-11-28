@@ -415,8 +415,8 @@ async function generateFilteredOpportunities() {
     drawText(ctx, fmtUsd(row.implied_value_usd), 550, ry + 8, { font: 'bold 12px "IBM Plex Mono"', color: COLORS.accent });
   });
 
-  drawText(ctx, `Early-discovery cohort: ${acct.early_discovery ?? 'n/a'} protocols below watchlist floor`, 60, startY + 330, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
-  drawText(ctx, 'Ranked by implied_value_usd descending. Strong 7d growth highlighted.', 60, startY + 348, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
+  drawText(ctx, `Early-discovery cohort: ${acct.early_discovery ?? 'n/a'} protocols below watchlist floor`, 60, startY + 344, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
+  drawText(ctx, 'Ranked by implied_value_usd descending. Strong 7d growth highlighted.', 60, startY + 362, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
 
   // RIGHT PANEL: Already-traded benchmark cohort
   const rightPanelX = 40 + leftPanelW + gap;
@@ -429,7 +429,7 @@ async function generateFilteredOpportunities() {
   ctx.stroke();
 
   drawText(ctx, 'ALREADY-TRADED BENCHMARK COHORT (liveRows — SEPARATED)', rightPanelX + 20, startY + 18, { font: 'bold 13px "IBM Plex Mono"', color: COLORS.text });
-  drawText(ctx, `Live tokens trade with fixed mcap_usd. ${radar.live.length} protocols excluded from pre-token ranking board.`, rightPanelX + 20, startY + 36, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
+  drawText(ctx, `Live tokens trade with fixed mcap_usd. ${acct.already_traded ?? radar.live.length} protocols excluded from pre-token ranking board.`, rightPanelX + 20, startY + 36, { font: '11px "IBM Plex Mono"', color: COLORS.textMuted });
 
   const liveHeaders = [
     { title: 'PROTOCOL', x: rightPanelX + 20, w: 180 },
@@ -553,7 +553,7 @@ async function generateProtocolDetailFarm() {
     ['TGE Stage', topRow.tge_stage || 'Late-Stage (>365d)'],
     ['TGE Readiness', analysis ? `${analysis.tge_readiness}/100` : 'n/a'],
     ['Retail Efficiency', `${topRow.retail_efficiency_score}/100`],
-    ['Est. Net ROI per $1k', fmtUsd(topRow.est_net_roi_per_1k * 1000)],
+    ['Est. Net ROI per $1k', fmtUsd(topRow.est_net_roi_per_1k)],
     ['Capital Efficiency', topRow.tvl_usd > 0 ? (topRow.implied_value_usd / topRow.tvl_usd).toFixed(2) + 'x' : 'n/a'],
     ['Cohort Percentile', `${Math.round(topRow.cohort_percentile || 0)}th`],
   ];
@@ -644,7 +644,7 @@ async function generateProtocolDetailFarm() {
 
   const summary = [
     capitalMatch ? `Total Capital: $${capitalMatch[1]}` : `Total Capital: ${parseCost(steps[1]) || parseCost(steps[0]) || 'n/a'}`,
-    gasMatch ? `Initial Gas: ${gasMatch[1]}` : `Total Gas Estimate: ~$20-30 over ${steps.length} weeks`,
+    gasMatch ? `Initial Gas: ${gasMatch[1]}` : `Total Gas Estimate: ~$20-30 over 60 days`,
     parseTime(steps[3]) ? `Hold Period: ${parseTime(steps[3])}` : 'Hold Period: n/a',
     parseTime(steps[2]) ? `Weekly Commitment: ${parseTime(steps[2])}` : 'Weekly Commitment: n/a',
   ];
@@ -669,7 +669,7 @@ async function generateProtocolDetailFarm() {
     ['Implied Value', fmtUsd(row2.implied_value_usd), fmtUsd(row3.implied_value_usd)],
     ['TGE Stage', row2.tge_stage || 'Late-Stage (>365d)', row3.tge_stage || 'Late-Stage (>365d)'],
     ['Retail Efficiency', `${row2.retail_efficiency_score}/100`, `${row3.retail_efficiency_score}/100`],
-    ['Est. ROI/$1k', fmtUsd(row2.est_net_roi_per_1k * 1000), fmtUsd(row3.est_net_roi_per_1k * 1000)],
+    ['Est. ROI/$1k', fmtUsd(row2.est_net_roi_per_1k), fmtUsd(row3.est_net_roi_per_1k)],
   ];
 
   compareRows.forEach((row, ri) => {
@@ -793,9 +793,9 @@ async function generateCalibrationMethodology() {
   const maxTvl = Math.max(...chartData.map(d => d.tvl)) * 1.1;
   const maxImpl = Math.max(...chartData.map(d => d.implied)) * 1.1;
 
-  const plotX = 135;
+  const plotX = 155;
   const plotY = y + 46;
-  const plotW = 1200;
+  const plotW = 1180;
   const plotH = 190;
 
   // axes

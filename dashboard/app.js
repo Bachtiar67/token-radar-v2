@@ -41,23 +41,6 @@
     return 'low';
   }
 
-  function impliedOf(row, model) {
-    var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
-    var growthMult = 1 + (growth / 100) * model.growth_weight;
-    var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
-    var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-    var liquidity = row.liquidity_score || 0.5;
-    var holder = row.holder_score || 0.5;
-    var momentum = row.momentum_score || 0.5;
-    var factorMult = 1 + (liquidity - 0.5) * model.liquidity_weight + (holder - 0.5) * model.holder_weight + (momentum - 0.5) * model.momentum_weight;
-    var riskPenalty = 0;
-    if (row.risk_flags) {
-      riskPenalty = row.risk_flags.length * 0.03;
-      riskPenalty = Math.min(riskPenalty, model.risk_penalty_max);
-    }
-    return Math.max(1, Math.round(row.tvl_usd * model.base_multiple * growthMult * maturity * factorMult * (1 - riskPenalty)));
-  }
-
   function el(tag, attrs) {
     var node = document.createElement(tag);
     if (attrs) {
@@ -77,54 +60,6 @@
       else node.appendChild(child);
     }
     return node;
-  }
-
-  function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
-  function holdDaysFor(age) {
-    if (age === null || age === undefined) return 30;
-    if (age < 180) return 60;
-    if (age < 365) return 45;
-    return 30;
-  }
-  function actionFor(p, capital, chain) {
-    var c = (p.category || '').toLowerCase();
-    var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the position open.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' and keep the position open.';
-    if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + name + ' and use the bridged funds in its app.';
-    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Stake $" + capital + " of the chain's staking asset through " + name + ' and keep the receipt.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedge.';
-    if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + name + '.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the shares.';
-    if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + '.';
-    if (c.indexOf('rwa') >= 0) return "Mint $" + capital + " of the protocol's yield asset on " + chain + ' and hold it.';
-    if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy.';
-    return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and keep the position open.';
-  }
-  function stepText(step) {
-    var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
-    if (s.length > 600) s = s.slice(0, 596) + '...';
-    if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
-    return s;
-  }
-  function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    return [
-      { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
-      { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
-      { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
-      { text: "Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.", cost: 'no fee to check, and never pay to claim', time: '10 minutes' },
-      { text: 'Write the wallet, the dates and every transaction in a farm log so you can repeat the position or unwind it.', cost: 'nothing but the log', time: '5 minutes' }
-    ].map(stepText);
   }
 
   function readHash() {
@@ -149,6 +84,19 @@
     var next = params.toString();
     if (next) window.history.replaceState(null, '', '#' + next);
     else window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+
+  function navigateRows(delta) {
+    var list = sortedRows(rows());
+    if (list.length === 0) return;
+    var currentIndex = list.findIndex(function (r) { return r.slug === state.selected; });
+    var nextIndex = (currentIndex + delta + list.length) % list.length;
+    var nextSlug = list[nextIndex].slug;
+    state.selected = nextSlug;
+    writeHash();
+    render();
+    var rowEl = document.querySelector('tr[data-selected="true"]');
+    if (rowEl) { rowEl.focus(); rowEl.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
   }
 
   function rows() {
@@ -215,12 +163,41 @@
     select.addEventListener('change', function () { state.category = select.value; writeHash(); render(); });
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
+    var csvBtn = el('button', { class: 'button', type: 'button', text: 'Export CSV', onclick: exportCsv });
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
-      el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
+      el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' }),
+      csvBtn
     );
+  }
+
+  function exportCsv() {
+    if (state.tab !== 'pre-token') return;
+    var list = sortedRows(rows());
+    if (list.length === 0) return;
+    var headers = ['Rank','Protocol','Category','Chains','TVL','7d %','Age','Liquidity %','Holders %','Momentum %','Implied Value','Risk Flags'];
+    var esc = function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; };
+    var lines = [headers.join(',')];
+    list.forEach(function (r) {
+      var growth = r.change_7d === null ? 'n/a' : fmtPct(r.change_7d);
+      var flags = (r.risk_flags || []).join('; ');
+      lines.push([
+        esc(r.rank), esc(r.name), esc(r.category || 'Other'), esc((r.chains || []).join('; ')),
+        esc(fmtUsd(r.tvl_usd)), esc(growth), esc(fmtAge(r.age_days)),
+        esc(r.liquidity_score ? Math.round(r.liquidity_score * 100) + '%' : 'n/a'),
+        esc(r.holder_score ? Math.round(r.holder_score * 100) + '%' : 'n/a'),
+        esc(r.momentum_score ? Math.round(r.momentum_score * 100) + '%' : 'n/a'),
+        esc(fmtUsd(r.implied_value_usd)), esc(flags)
+      ].join(','));
+    });
+    var blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'token-radar-v3-board-' + DATA.as_of + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function sortHeader(key, label) {
@@ -254,7 +231,7 @@
         'data-selected': state.selected === r.slug ? 'true' : 'false',
         tabindex: '0',
         onclick: function () { openDetail(r.slug); },
-        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } }
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(r.slug); } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); navigateRows(e.key === 'ArrowDown' ? 1 : -1); } }
       },
         el('td', { class: 'num', text: String(r.rank) }),
         el('td', null, el('div', { class: 'name' },
@@ -347,7 +324,6 @@
     state.selected = slug;
     writeHash();
     dialog.textContent = '';
-    var steps = farmSteps(row);
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
         el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size }),
@@ -364,9 +340,9 @@
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
         el('div', null, el('span', { text: 'Maturity multiplier' }), el('b', { class: 'num', text: String(row.maturity_multiplier) })),
-        el('div', null, el('span', { text: 'Liquidity score' }), el('b', { class: 'num', text: row.liquidity_score ? Math.round(row.liquidity_score * 10000) / 100 + '%' : 'n/a' })),
-        el('div', null, el('span', { text: 'Holder score' }), el('b', { class: 'num', text: row.holder_score ? Math.round(row.holder_score * 10000) / 100 + '%' : 'n/a' })),
-        el('div', null, el('span', { text: 'Momentum score' }), el('b', { class: 'num', text: row.momentum_score ? Math.round(row.momentum_score * 10000) / 100 + '%' : 'n/a' })),
+        el('div', null, el('span', { text: 'Liquidity score' }), el('b', { class: 'num', text: row.liquidity_score ? Math.round(row.liquidity_score * 100) + '%' : 'n/a' })),
+        el('div', null, el('span', { text: 'Holder score' }), el('b', { class: 'num', text: row.holder_score ? Math.round(row.holder_score * 100) + '%' : 'n/a' })),
+        el('div', null, el('span', { text: 'Momentum score' }), el('b', { class: 'num', text: row.momentum_score ? Math.round(row.momentum_score * 100) + '%' : 'n/a' })),
         el('div', null, el('span', { text: 'Risk penalty' }), el('b', { class: 'num ' + (row.model.risk_penalty > 0 ? 'neg' : ''), text: '-' + Math.round((row.model.risk_penalty || 0) * 10000) / 100 + '%' })),
         el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),
@@ -386,7 +362,7 @@
     }
     dialog.appendChild(el('section', { class: 'detail-section' },
       el('h3', { text: 'Farm plan' }),
-      el('ol', { class: 'steps' }, steps.map(function (s) {
+      el('ol', { class: 'steps' }, (row.farm_steps || []).map(function (s) {
         var at = s.indexOf(' Cost: ');
         var action = at >= 0 ? s.slice(0, at) : s;
         var tail = at >= 0 ? s.slice(at + 1) : '';
@@ -398,6 +374,23 @@
     } else {
       dialog.setAttribute('open', '');
     }
+  }
+
+  function impliedOf(row, model) {
+    var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
+    var growthMult = 1 + (growth / 100) * model.growth_weight;
+    var age = row.age_days === null || row.age_days === undefined ? model.unknown_age_days : row.age_days;
+    var maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+    var liquidity = row.liquidity_score || 0.5;
+    var holder = row.holder_score || 0.5;
+    var momentum = row.momentum_score || 0.5;
+    var factorMult = 1 + (liquidity - 0.5) * model.liquidity_weight + (holder - 0.5) * model.holder_weight + (momentum - 0.5) * model.momentum_weight;
+    var riskPenalty = 0;
+    if (row.risk_flags) {
+      riskPenalty = row.risk_flags.length * 0.03;
+      riskPenalty = Math.min(riskPenalty, model.risk_penalty_max);
+    }
+    return Math.max(1, Math.round(row.tvl_usd * model.base_multiple * growthMult * maturity * factorMult * (1 - riskPenalty)));
   }
 
   function render() {

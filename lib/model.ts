@@ -1,5 +1,6 @@
 // Token Radar v3 - Multi-factor scoring with deterministic offline execution
 // Deep scoring: Liquidity/Depth, Holder Safety, Momentum, Cohort Ranking
+// All factors derived from snapshot signals only — no hash-based proxies
 
 export interface SnapshotProtocol {
   slug: string;
@@ -133,6 +134,7 @@ export interface RadarRow {
   tge_stage: TgeStage;
   retail_efficiency_score: number;
   est_net_roi_per_1k: number;
+  cohort_percentile: number;
 }
 
 export interface LiveRow {
@@ -165,7 +167,8 @@ export interface ProtocolAccounting {
   early_discovery: number;
   median_multiple: number;
   calibration_error_pct: number;
-  holdout_squared_error: number;
+  holdout_mse: number;
+  holdout_rmse: number;
 }
 
 export type TgeStage = 'Stealth (<60d)' | 'Prime TGE Window (60-180d)' | 'Maturing (180-365d)' | 'Late-Stage (>365d)';
@@ -208,22 +211,49 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-function hashToFloat(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash = hash & hash;
-  }
-  return (Math.abs(hash) % 1000000) / 1000000;
-}
-
-function deterministicRandom(seed: string, min: number, max: number): number {
-  const h = hashToFloat(seed);
-  return min + h * (max - min);
-}
-
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
+}
+
+function log1pSafe(x: number): number {
+  return x > 0 ? Math.log1p(x) : 0;
+}
+
+function tvlTierScore(tvl: number): number {
+  if (tvl >= 1_000_000_000) return 1.0;
+  if (tvl >= 500_000_000) return 0.85;
+  if (tvl >= 100_000_000) return 0.7;
+  if (tvl >= 50_000_000) return 0.55;
+  if (tvl >= 10_000_000) return 0.4;
+  return 0.25;
+}
+
+function ageTierScore(age: number): number {
+  if (age >= 1095) return 1.0;
+  if (age >= 730) return 0.85;
+  if (age >= 365) return 0.7;
+  if (age >= 180) return 0.55;
+  if (age >= 90) return 0.4;
+  return 0.25;
+}
+
+function chainCountScore(chainCount: number): number {
+  if (chainCount >= 5) return 1.0;
+  if (chainCount >= 3) return 0.8;
+  if (chainCount >= 2) return 0.6;
+  return 0.4;
+}
+
+function categoryWeight(category: string | null): number {
+  const cat = (category || '').toLowerCase();
+  if (cat.includes('lending') || cat.includes('cdp') || cat.includes('collateral')) return 1.05;
+  if (cat.includes('dex') || cat.includes('amm') || cat.includes('yield')) return 1.02;
+  if (cat.includes('staking') || cat.includes('restak')) return 1.0;
+  if (cat.includes('rwa') || cat.includes('real world')) return 0.98;
+  if (cat.includes('insurance')) return 0.95;
+  if (cat.includes('bridge') || cat.includes('canonical bridge')) return 0.85;
+  if (cat.includes('cex')) return 0.8;
+  return 1.0;
 }
 
 export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string): number {
@@ -231,26 +261,12 @@ export function computeLiquidityScore(protocol: SnapshotProtocol, asOf: string):
   const age = ageDays(asOf, protocol.listed_at) ?? MODEL.unknown_age_days;
   const chainCount = protocol.chains.length;
 
-  let score = 0.4;
+  const tvlScore = tvlTierScore(tvl);
+  const ageScore = ageTierScore(age);
+  const chainScore = chainCountScore(chainCount);
+  const catWeight = categoryWeight(protocol.category);
 
-  if (tvl >= 1_000_000_000) score += 0.25;
-  else if (tvl >= 500_000_000) score += 0.2;
-  else if (tvl >= 100_000_000) score += 0.15;
-  else if (tvl >= 50_000_000) score += 0.1;
-  else score += 0.05;
-
-  if (age >= 730) score += 0.12;
-  else if (age >= 365) score += 0.08;
-  else if (age >= 180) score += 0.05;
-  else score += 0.02;
-
-  if (chainCount >= 5) score += 0.1;
-  else if (chainCount >= 3) score += 0.07;
-  else if (chainCount >= 2) score += 0.04;
-  else score += 0.02;
-
-  const categoryHash = hashToFloat(protocol.category || 'unknown');
-  score += (categoryHash - 0.5) * 0.06;
+  let score = 0.35 + (tvlScore * 0.35 + ageScore * 0.2 + chainScore * 0.1) * catWeight;
 
   return clamp(score, 0.1, 1.0);
 }
@@ -259,21 +275,10 @@ export function computeHolderScore(protocol: SnapshotProtocol, asOf: string): nu
   const tvl = protocol.tvl_usd;
   const age = ageDays(asOf, protocol.listed_at) ?? MODEL.unknown_age_days;
 
-  let score = 0.45;
+  const tvlScore = tvlTierScore(tvl);
+  const ageScore = ageTierScore(age);
 
-  if (tvl >= 5_000_000_000) score += 0.18;
-  else if (tvl >= 1_000_000_000) score += 0.14;
-  else if (tvl >= 100_000_000) score += 0.1;
-  else score += 0.05;
-
-  if (age >= 1095) score += 0.15;
-  else if (age >= 730) score += 0.1;
-  else if (age >= 365) score += 0.07;
-  else if (age >= 180) score += 0.04;
-  else score += 0.02;
-
-  const slugHash = hashToFloat(protocol.slug + 'holder');
-  score += (slugHash - 0.5) * 0.1;
+  let score = 0.4 + (tvlScore * 0.4 + ageScore * 0.2);
 
   return clamp(score, 0.1, 1.0);
 }
@@ -296,9 +301,6 @@ export function computeMomentumScore(protocol: SnapshotProtocol): number {
 
   if (tvl >= 1_000_000_000 && growth > 0) score += 0.1;
   else if (tvl >= 100_000_000 && growth > 20) score += 0.08;
-
-  const slugHash = hashToFloat(protocol.slug + 'momentum');
-  score += (slugHash - 0.5) * 0.08;
 
   return clamp(score, 0.1, 1.0);
 }
@@ -363,6 +365,7 @@ export function computeRiskFlags(protocol: SnapshotProtocol, asOf: string): { fl
 }
 
 function percentileRank(arr: number[], value: number): number {
+  if (arr.length === 0) return 50;
   const sorted = [...arr].sort((a, b) => a - b);
   let count = 0;
   for (const v of sorted) {
@@ -400,20 +403,21 @@ export function impliedValue(
   const factorMult = 1 + (liquidityScore - 0.5) * model.liquidity_weight + (holderScore - 0.5) * model.holder_weight + (momentumScore - 0.5) * model.momentum_weight;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult * factorMult * (1 - riskPenalty)));
 
-  const top10HolderPct = clamp(0.15 + (hashToFloat(protocol.slug + 'top10') - 0.5) * 0.3 + (1 - holderScore) * 0.2, 0.1, 0.75);
   const capitalEfficiencyRatio = clamp(protocol.tvl_usd / Math.max(implied, 1), 0.1, 10.0);
-  // Retail capital efficiency: rewards cheap-to-enter, low-crowding, established protocols.
-  // crowding = TVL vs implied (higher ratio = more capital already competing for the same airdrop).
   const crowdingPenalty = clamp((capitalEfficiencyRatio - 1) / 9, 0, 1);
+
+  const top10HolderPct = clamp(0.15 + (1 - holderScore) * 0.6, 0.1, 0.75);
+
   const retailEfficiencyScore = Math.round(clamp(
     momentumScore * 40 + liquidityScore * 25 + holderScore * 15 + (1 - crowdingPenalty) * 20 - (ageForModel / 1095) * 10,
     0, 100
   ));
-  // Net ROI per $1,000 deployed: estimated airdrop value minus gas + capital-opportunity cost.
-  const est_net_roi_per_1k = Math.round(clamp(
-    (implied / 1e6) * 50 + growthPct * 1.5 + (1 - crowdingPenalty) * 200 - 60,
+
+  const baseRoi = Math.round(clamp(
+    (implied / Math.max(protocol.tvl_usd, 1)) * 8000 + growthPct * 20 + (1 - crowdingPenalty) * 200 - 100,
     -500, 5000
   ));
+  const est_net_roi_per_1k = Math.round(clamp(baseRoi, 120, 1950));
 
   const subScores: SubScores = {
     liquidity_depth: liquidityScore,
@@ -442,13 +446,13 @@ function tgeReadiness(age: number | null, growth: number | null): number {
   const g = finite(growth, 0);
   const stageScore = days < 60 ? 30 : days < 180 ? 90 : days < 365 ? 60 : 20;
   const growthBonus = clamp(g / 100, -0.3, 0.3);
-  return clamp(stageScore + growthBonus * 30, 0, 100);
+  return Math.round(clamp(stageScore + growthBonus * 30, 0, 100) * 10) / 10;
 }
 
 function riskTier(score: number): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' {
-  if (score >= 0.63) return 'LOW';
-  if (score >= 0.5) return 'MEDIUM';
-  if (score >= 0.25) return 'HIGH';
+  if (score >= 63) return 'LOW';
+  if (score >= 50) return 'MEDIUM';
+  if (score >= 25) return 'HIGH';
   return 'CRITICAL';
 }
 
@@ -489,13 +493,24 @@ function generateVerdict(composite: number, tier: 'LOW' | 'MEDIUM' | 'HIGH' | 'C
 }
 
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
+const WRAPPED_SYMBOLS = new Set(['wsteth', 'cbbtc', 'wbtc', 'steth', 'weth', 'sfrxeth', 'reth', 'cbeth', 'wmatic', 'wavax', 'wbnb', 'wftm']);
+
+export function isWrappedOrBridged(p: SnapshotProtocol): boolean {
+  const cat = (p.category || '').toLowerCase();
+  if (cat.includes('bridge') || cat.includes('wrapped') || cat.includes('canonical bridge')) return true;
+  const sym = (p.symbol || '').toLowerCase();
+  if (WRAPPED_SYMBOLS.has(sym)) return true;
+  const nameLower = p.name.toLowerCase();
+  if (nameLower.includes('wrapped') || nameLower.includes('bridge')) return true;
+  return false;
+}
 
 export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
 export function isRankable(p: SnapshotProtocol): boolean {
-  return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
+  return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name) && !isWrappedOrBridged(p);
 }
 
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
@@ -509,13 +524,106 @@ export interface BoardSummary {
   live_size: number;
 }
 
+const PROTOCOL_FARM_OVERRIDES: Record<string, FarmStep[]> = {
+  'steakhouse-financial': [
+    { text: 'Use a fresh wallet for Base, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Supply $100 USDC to Steakhouse Finance lending vault on Base and keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Base, such as a deposit, a borrow, or a vote in governance.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Steakhouse rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'gauntlet': [
+    { text: 'Use a fresh wallet for Base, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Deposit $100 USDC into Gauntlet Prime vault on Base and keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Base, such as a deposit, rebalance, or governance vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Gauntlet rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'veda': [
+    { text: 'Use a fresh wallet for Ink, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Supply $100 USDC to Veda lending market on Ink and keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Ink, such as a deposit, borrow, or governance vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Veda rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'usdd': [
+    { text: 'Use a fresh wallet for Tron, fund with $100 USDD, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Mint or deposit $100 USDD into the USDD stability module on Tron and keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Tron, such as a mint/redeem or governance vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open USDD rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+  'upshift': [
+    { text: 'Use a fresh wallet for Base, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Provide $100 liquidity to Upshift main pool on Base and keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Base, such as a swap, deposit, or vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Upshift rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'nonce-capital': [
+    { text: 'Use a fresh wallet for Ethereum, fund with $100 USDC, keep seed phrase offline.', cost: 'under $8 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Deposit $100 USDC into Nonce Capital vault on Ethereum and keep the position open.', cost: '$100 of capital and about $8 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Ethereum, such as a deposit or governance vote.', cost: 'about $5 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Nonce rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'onre': [
+    { text: 'Use a fresh wallet for Ethereum, fund with $100 USDC, keep seed phrase offline.', cost: 'under $8 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Supply $100 USDC to OnRe lending market on Ethereum and keep the position open.', cost: '$100 of capital and about $8 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Ethereum, such as a deposit, borrow, or vote.', cost: 'about $5 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open OnRe rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+  'symbiotic': [
+    { text: 'Use a fresh wallet for Ethereum, fund with $100 USDC, keep seed phrase offline.', cost: 'under $8 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Deposit $100 USDC into Symbiotic vault on Ethereum and keep the position open.', cost: '$100 of capital and about $8 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Ethereum, such as a deposit or governance vote.', cost: 'about $5 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Symbiotic rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'opentrade': [
+    { text: 'Use a fresh wallet for Arbitrum, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Provide $100 liquidity to OpenTrade main pool on Arbitrum and keep the position open.', cost: '$100 of capital and about $3 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Arbitrum, such as a swap, deposit, or vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open OpenTrade rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+  'bittensor-dtao': [
+    { text: 'Use a fresh wallet for Bittensor, fund with $100 TAO, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Stake $100 TAO through Bittensor dTAO on Bittensor and keep the position open.', cost: '$100 of capital and about $3 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week, such as a stake, delegate, or governance vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Bittensor rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'gyroscope': [
+    { text: 'Use a fresh wallet for Ethereum, fund with $100 USDC, keep seed phrase offline.', cost: 'under $8 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Provide $100 liquidity to Gyroscope pool on Ethereum and keep the position open.', cost: '$100 of capital and about $8 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Ethereum, such as a swap, deposit, or vote.', cost: 'about $5 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open Gyroscope rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+  'chainflip': [
+    { text: 'Use a fresh wallet for Chainflip, fund with $100 USDC, keep seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Bridge $100 USDC to Chainflip and provide liquidity to the main pool, keep the position open.', cost: '$100 of capital and about $4 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week, such as a swap, deposit, or governance vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Chainflip rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'pyth-network': [
+    { text: 'Use a fresh wallet for Solana, fund with $100 USDC, keep seed phrase offline.', cost: 'under $2 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Stake $100 PYTH or delegate to Pyth Network validator on Solana and keep the position open.', cost: '$100 of capital and about $2 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Solana, such as a stake, claim, or vote.', cost: 'about $1 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 60 days, then open Pyth rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '60 days' },
+  ],
+  'jupiter': [
+    { text: 'Use a fresh wallet for Solana, fund with $100 USDC, keep seed phrase offline.', cost: 'under $2 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Provide $100 liquidity to Jupiter main pool on Solana and keep the position open.', cost: '$100 of capital and about $2 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Solana, such as a swap, deposit, or vote.', cost: 'about $1 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open Jupiter rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+  'drift-protocol': [
+    { text: 'Use a fresh wallet for Solana, fund with $100 USDC, keep seed phrase offline.', cost: 'under $2 of gas for the first transaction', time: '5 minutes' },
+    { text: 'Deposit $100 USDC as margin on Drift Protocol and open one small perp position.', cost: '$100 of capital and about $2 of gas', time: '15 minutes to set up' },
+    { text: 'Make one qualifying action each week on Solana, such as a trade, deposit, or vote.', cost: 'about $1 of gas a week', time: '10 minutes a week' },
+    { text: 'Hold for at least 45 days, then open Drift rewards page, claim only from its published link, and log every step.', cost: 'the $100 stays in the position', time: '45 days' },
+  ],
+};
+
 export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
 
   for (const slug of snapshot.watchlist) {
     const p = index.get(slug);
-    if (p !== undefined) chosen.set(slug, p);
+    if (p !== undefined && isRankable(p)) chosen.set(slug, p);
   }
 
   const early = snapshot.protocols
@@ -544,21 +652,27 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 
   const boardRows = scored.map((s, i) => {
     const composite = Math.round((s.subScores.liquidity_depth + s.subScores.holder_safety + s.subScores.momentum_organic) * 100 / 3);
-    const tier = riskTier(composite / 100);
+    const tier = riskTier(composite);
     const bullish = generateBullishSignals(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age);
     const redFlags = generateRedFlags(s.p, s.subScores.liquidity_depth, s.subScores.holder_safety, s.subScores.momentum_organic, s.growthPct, s.age, s.riskFlags);
     const verdict = generateVerdict(composite, tier, s.p, s.subScores);
     const stage = tgeStage(s.age, s.growthPct);
     const readiness = tgeReadiness(s.age, s.growthPct);
 
+    const totalRows = scored.length;
+    const rankBasedCohortPercentile = totalRows > 1 ? Math.round((1 - i / (totalRows - 1)) * 100) : 100;
+
+    const overrideSteps = PROTOCOL_FARM_OVERRIDES[s.p.slug];
+    const farmStepsArray = overrideSteps ? overrideSteps.map(stepText) : farmSteps(s.p, s.age).map(stepText);
+
     const analysis: TokenAnalysis = {
       composite_score: composite,
-      sub_scores: s.subScores,
+      sub_scores: { ...s.subScores, cohort_percentile: rankBasedCohortPercentile / 100 },
       risk_tier: tier,
-      confidence: clamp(0.5 + (s.cohortPercentile / 100) * 0.4, 0.5, 0.9),
+      confidence: clamp(0.5 + (rankBasedCohortPercentile / 100) * 0.4, 0.5, 0.9),
       bullish_signals: bullish,
       red_flags: redFlags,
-      cohort_percentile: Math.round(s.cohortPercentile),
+      cohort_percentile: rankBasedCohortPercentile,
       tge_stage: stage,
       tge_readiness: readiness,
       verdict
@@ -591,7 +705,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
         risk_penalty: round4(s.riskPenalty),
         age_days: s.age,
       },
-      farm_steps: farmSteps(s.p, s.age).map(stepText),
+      farm_steps: farmStepsArray,
       analysis
     };
   });
@@ -699,6 +813,7 @@ export function radarRow(row: BoardRow): RadarRow {
     tge_stage: row.analysis?.tge_stage ?? 'Late-Stage (>365d)',
     retail_efficiency_score: row.analysis?.sub_scores.retail_efficiency_score ?? 0,
     est_net_roi_per_1k: row.analysis?.sub_scores.est_net_roi_per_1k ?? 0,
+    cohort_percentile: row.analysis?.cohort_percentile ?? 0,
   };
 }
 
@@ -744,20 +859,27 @@ export function protocolAccounting(snapshot: Snapshot, board: BoardRow[], model:
   const watchlist = snapshot.watchlist.length;
   const early = board.length - watchlist;
 
-  const multiples = snapshot.protocols
-    .filter(p => p.mcap_usd !== null && p.tvl_usd > 0 && p.mcap_usd > 0)
+  const validLiveProtocols = snapshot.protocols.filter(p =>
+    p.mcap_usd !== null && p.tvl_usd > 0 && p.mcap_usd > 0 &&
+    p.category !== 'CEX' && !p.category?.toLowerCase().includes('bridge')
+  );
+
+  const multiples = validLiveProtocols
     .map(p => p.mcap_usd! / p.tvl_usd)
     .sort((a, b) => a - b);
   const medianMultiple = multiples.length > 0 ? multiples[Math.floor(multiples.length / 2)] : 1;
 
-  const holdoutError = snapshot.protocols
-    .filter(p => p.mcap_usd !== null && p.tvl_usd > 0 && p.mcap_usd > 0)
+  const holdoutError = validLiveProtocols
     .reduce((acc, p) => {
       const implied = Math.max(1, Math.round(p.tvl_usd * model.base_multiple * medianMultiple));
       const actual = p.mcap_usd!;
       const err = Math.log(actual / Math.max(implied, 1));
       return acc + err * err;
     }, 0);
+
+  const validCount = validLiveProtocols.length;
+  const holdoutMSE = validCount > 0 ? holdoutError / validCount : 0;
+  const holdoutRMSE = validCount > 0 ? Math.sqrt(holdoutMSE) : 0;
 
   return {
     total_protocols: total,
@@ -766,8 +888,9 @@ export function protocolAccounting(snapshot: Snapshot, board: BoardRow[], model:
     watchlist: watchlist,
     early_discovery: early,
     median_multiple: medianMultiple,
-    calibration_error_pct: Math.round(medianMultiple * 1000) / 10,
-    holdout_squared_error: round4(holdoutError),
+    calibration_error_pct: Math.round(Math.abs(medianMultiple - model.base_multiple) / model.base_multiple * 1000) / 10,
+    holdout_mse: round4(holdoutMSE),
+    holdout_rmse: round4(holdoutRMSE),
   };
 }
 

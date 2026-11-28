@@ -5,7 +5,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from '../lib/model.ts';
+import { boardIssue, buildRadar, dataScript, parseSnapshot, MODEL_VERSION } from '../lib/model.ts';
 import { buildDossier } from '../vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -19,6 +19,40 @@ function arg(name: string, fallback: string): string {
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
   const withEquals = process.argv.find((a) => a.startsWith(`--${name}=`));
   return withEquals === undefined ? fallback : withEquals.slice(name.length + 3);
+}
+
+function printHelp(): void {
+  console.log(`
+Token Radar v3 (${MODEL_VERSION}) - Pre-token Alpha Terminal
+Usage: token-radar [options]
+
+Options:
+  --input <path>      Path to snapshot.json or directory containing it (default: /input/snapshot.json)
+  --output <path>     Output directory (default: $MAKEFUN_OUTPUT_DIR or /output)
+  --help              Show this help message and exit
+  --version           Print version and exit
+
+Environment:
+  MAKEFUN_OUTPUT_DIR  Default output directory (used if --output not provided)
+
+Examples:
+  token-radar --input /data/snapshot.json --output /out
+  token-radar --version
+`);
+}
+
+function printVersion(): void {
+  console.log(`token-radar ${MODEL_VERSION}`);
+}
+
+if (process.argv.includes('--help')) {
+  printHelp();
+  process.exit(0);
+}
+
+if (process.argv.includes('--version')) {
+  printVersion();
+  process.exit(0);
 }
 
 const inputArg = arg('input', '/input');

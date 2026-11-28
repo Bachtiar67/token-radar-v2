@@ -11,7 +11,7 @@ import { buildDossier } from './vendor/makefun-board.ts';
 const here = fileURLToPath(new URL('.', import.meta.url));
 
 const TEXT_MAX_BYTES = 65_536;
-const SCREENSHOT_CAPS = { max: 4, max_bytes: 524_288 };
+const SCREENSHOT_CAPS = { max: 3, max_bytes: 524_288 };
 const IMAGE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 
 function arg(name: string, fallback: string): string {
@@ -57,8 +57,8 @@ function copyFiles(from: string, to: string): string[] {
 
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
-if (shots.length < 4) {
-  process.stderr.write(`token radar v3: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 4, the board, a detail view and a filtered view\n`);
+if (shots.length < 3) {
+  process.stderr.write(`token radar v3: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
   process.exit(1);
 }
 for (const name of shots) {

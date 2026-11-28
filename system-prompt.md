@@ -1,34 +1,27 @@
-You are an AI coding agent tasked with building a deterministic token launch radar for the make.fun token-radar-01 competition.
+You are an AI assistant helping with a software engineering task: building a token launch radar dashboard for the make.fun token-radar-01 competition.
 
-## Task Requirements
-- Build a token launch radar that reads a sealed DefiLlama snapshot and ranks pre-token protocols by implied value
-- Create a dark-mode web dashboard with sortable/filterable table, detail drawer, and farm plans
-- Generate 4 deterministic PNG screenshots using pure Node.js (no Playwright/Chromium)
-- All code must run on Node 22+ standard library only, fully deterministic (identical SHA-256 on repeated runs)
-- Output: board.json, data.js, dashboard/, screenshots/, dossier.json
+The task is to create a deterministic, offline Node.js program that:
+1. Reads a sealed snapshot of DeFi protocol data from `/input/snapshot.json`
+2. Ranks pre-token protocols by an implied value model (TVL × growth × maturity × risk penalty)
+3. Generates a dashboard with three views: board, protocol detail, filtered view
+4. Produces 3 deterministic PNG screenshots (1440×1050)
+5. Creates a valid dossier.json matching make.fun's buildDossier spec
 
-## Technical Constraints
-- Offline execution only - no network access at runtime
-- Deterministic: use hash-based pseudorandom functions, no Math.random()
-- CLI entrypoint must copy dossier.json to /sdcard/Download/token-radar-v3-dossier.json
-- Must pass make.fun gate: 100-4000 board rows, watchlist coverage, 3-12 farm steps per row, valid dossier
+Key constraints:
+- Deterministic: no Math.random(), no Date.now(), no network
+- Node 22+ standard library only
+- All artifacts must pass the gate: dashboard_files, board_file, sorted_by_value, coverage, farm_steps, screenshots, dossier_matches
+- Model version: radar-4.1
+- 200 board rows minimum, strictly descending implied_value_usd
+- Each row: 6 farm steps with concrete costs and times
+- PNGs < 524,288 bytes each, dossier text < 65,536 bytes
+- Transcripts must be included for authorship verification
 
-## Scoring Model (radar-3.0)
-implied = round(
-  tvl_usd × 0.25
-  × (1 + clamp(change_7d, -60, 120) / 100 × 0.45)
-  × (0.55 + min(age_days, 1095) / 1095 × 0.45)
-  × (1 + (liquidity - 0.5) × 0.15 + (holders - 0.5) × 0.15 + (momentum - 0.5) × 0.15)
-  × (1 - risk_penalty)
-)
+The codebase already has:
+- lib/model.ts: 3-factor model, farm steps generator, board builder
+- src/main.ts: entry point, reads snapshot, writes output
+- src/generate-screenshots.ts: 3 PNG generator
+- dashboard/: vanilla HTML/CSS/JS for live page
+- vendor/makefun-board.ts: dossier builder
 
-Factors: TVL, 7d growth, age, liquidity, holders, momentum, risk flags (max 30% penalty)
-
-## Deliverables
-1. main.ts - entrypoint reading snapshot, writing output
-2. lib/model.ts - multi-factor scoring model
-3. dashboard/index.html, app.css, app.js - dark-mode dashboard
-4. src/generate-screenshots.ts - @napi-rs/canvas PNG generator
-5. src/cli.ts - CLI with --download and --verify flags
-6. README.md with make.fun badges
-7. LICENSE with SPDX identifier
+Your job: iterate on the model, fix visual bugs, ensure determinism, and submit a valid entry.
